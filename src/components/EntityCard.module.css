@@ -1,0 +1,487 @@
+/* EntityCard.module.css
+   Final: inputs shorter + per-field wide variant (320px)
+   Compatible with Next.js CSS Modules (Turbopack)
+*/
+
+/* -----------------------------
+   Global variables & box-sizing
+   ----------------------------- */
+  :global(:root) {
+   --card-border: #ebe9f1;
+   --muted-1: #6e6b7b;
+   --muted-2: #5e5873;
+   --input-border: #d8d6de;
+   --input-focus: #7367f0;
+   --entity-card-primary: var(--input-focus);
+   --danger: #ea5455;
+   --success: #28c76f;
+   --dot-border: #999;
+ }
+  
+  /* global box-sizing reset must be marked global for css modules */
+  :global(*),
+  :global(*::before),
+  :global(*::after) {
+    box-sizing: border-box;
+  }
+  
+  /* -----------------------------
+     Content header
+     ----------------------------- */
+  .contentHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    width: 100%;
+  }
+  
+  .contentHeaderLeft {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+    min-width: 0;
+  }
+  
+  .contentHeaderRight {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    text-align: right;
+    margin-bottom: 0.25rem;
+    align-items: center;
+  }
+  
+  /* Breadcrumbs */
+  .breadcrumbsTop {
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  
+  .contentHeaderTitle {
+    font-weight: 500;
+    color: var(--mui-palette-text-primary);
+    font-size: 1.5rem;
+    margin: 0;
+    padding-right: 1rem;
+    border-right: 1px solid var(--mui-palette-divider);
+    white-space: nowrap;
+    display: inline-block;
+  }
+  
+  .breadcrumbWrapper {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.75rem;
+    box-shadow: 1px 1px 10px rgba(0, 0, 0, 0.1);
+    padding: 1px;
+    border-radius: 0.357rem;
+    background-color: var(--mui-palette-background-paper);
+  }
+  
+  [data-dark] .breadcrumbWrapper {
+    box-shadow: 1px 1px 10px rgba(0, 0, 0, 0.3);
+  }
+  
+  .breadcrumbItem {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--mui-palette-text-secondary);
+  }
+  
+  .breadcrumbItemActive {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--mui-palette-text-primary);
+  }
+  
+  /* -----------------------------
+     Buttons
+     ----------------------------- */
+  .buttonVariant {
+    min-width: auto;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.358rem;
+    font-weight: 500;
+    text-transform: none;
+    box-shadow: none;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease-in-out;
+    background: transparent;
+  }
+  .buttonVariant:focus,
+  .buttonVariant:active {
+    outline: none;
+    box-shadow: none;
+  }
+  
+  .buttonSecondary {
+    color: var(--mui-palette-text-secondary);
+    border: 1px solid var(--mui-palette-divider);
+    background-color: transparent;
+  }
+  .buttonSecondary:hover {
+    color: var(--mui-palette-text-primary);
+    background-color: var(--mui-palette-action-hover);
+    border-color: var(--mui-palette-divider);
+  }
+  
+  .buttonPrimary {
+   color: var(--entity-card-primary, var(--input-focus));
+   border: 1px solid var(--entity-card-primary, var(--input-focus));
+    background-color: transparent;
+  }
+  .buttonPrimary:hover {
+    color: #fff;
+   background-color: var(--entity-card-primary, var(--input-focus));
+   border-color: var(--entity-card-primary, var(--input-focus));
+  }
+  
+  .buttonError {
+    background: linear-gradient(45deg, var(--danger), var(--danger));
+    border: none;
+    color: #fff;
+    box-shadow: 0 4px 12px 0 rgba(234, 84, 85, 0.4);
+  }
+  .buttonError:hover {
+    box-shadow: 0 8px 25px 0 rgba(234, 84, 85, 0.4);
+  }
+  
+  .buttonSuccess {
+    background: linear-gradient(45deg, var(--success), var(--success));
+    border: none;
+    color: #fff;
+    box-shadow: 0 4px 12px 0 rgba(40, 199, 111, 0.4);
+  }
+  .buttonSuccess:hover {
+    box-shadow: 0 8px 25px 0 rgba(40, 199, 111, 0.4);
+  }
+  
+  /* small utilities */
+  .mr50 { margin-right: 0.5rem; }
+  .mb50 { margin-bottom: 0.5rem; }
+  .alignMiddle { vertical-align: middle; }
+  
+  /* -----------------------------
+     Card / Accordion
+     ----------------------------- */
+  .cardContainer {
+    border: 1px solid var(--mui-palette-divider);
+    border-radius: 0.428rem;
+    box-shadow: 0 4px 24px 0 rgba(0,0,0,0.1);
+    background-color: var(--mui-palette-background-paper);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+  
+  [data-dark] .cardContainer {
+    box-shadow: 0 4px 24px 0 rgba(0,0,0,0.3);
+  }
+  
+  .cardContent {
+    padding: 1rem;
+    overflow: hidden;
+  }
+  
+  .accordionContainer {
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--mui-palette-divider);
+    border-radius: 0.428rem;
+    overflow: hidden;
+  }
+  .accordionContainer:not(:last-of-type) {
+    border-bottom: 1px solid var(--mui-palette-divider);
+    border-bottom-right-radius: 0.428rem;
+    border-bottom-left-radius: 0.428rem;
+    margin-bottom: 0.75rem; /* Reduced spacing between sections */
+  }
+  .accordionContainer:not(:first-of-type) {
+    border-top-left-radius: 0.428rem;
+    border-top-right-radius: 0.428rem;
+    margin-top: 0; /* Remove top margin to prevent double spacing */
+  }
+  
+  .accordionSummary {
+    background-color: var(--mui-palette-background-paper);
+    border: none;
+    min-height: 48px;
+    padding: 1rem 2.8rem 1rem 1rem;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 1.1rem;
+    color: inherit;
+  }
+  .accordionSummary:hover,
+  .accordionSummary:active,
+  .accordionSummary:focus {
+    background-color: var(--mui-palette-background-paper);
+    color: inherit;
+    outline: none;
+    box-shadow: none;
+  }
+  
+  /* MUI tweaks */
+  .accordionSummary .MuiAccordionSummary-content { margin: 0; }
+  .accordionSummary .MuiAccordionSummary-content.Mui-expanded { margin: 0; }
+  .accordionSummary .MuiAccordionSummary-expandIconWrapper { color: inherit; }
+  
+  /* Ensure consistent spacing between accordion sections */
+  .accordionContainer + .accordionContainer {
+    margin-top: 0; /* Remove top margin to prevent double spacing */
+  }
+  
+  /* Maintain spacing when accordion is expanded */
+  .accordionContainer.Mui-expanded {
+    margin-bottom: 0.75rem; /* Reduced spacing even when expanded */
+  }
+  
+  .accordionDetails {
+    padding: 1rem;
+    line-height: 1.5;
+    padding-top: 0.42rem;
+    background-color: var(--mui-palette-background-paper);
+    margin-bottom: 0; /* Remove bottom margin to prevent extra spacing */
+  }
+  
+  /* -----------------------------
+     Form fields (horizontal) - improved alignment
+     ----------------------------- */
+.fieldContainer {
+  display: flex;
+  align-items: flex-start; /* Allow lookup field to expand downward */
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin-bottom: 0.75rem;
+  margin-right: 1rem;
+}
+  
+/* Label block */
+  .formFieldLabel {
+    font-weight: 500;
+    color: var(--mui-palette-text-secondary);
+    font-size: 0.857rem; /* 13.7px - small font size */
+    font-family: 'Montserrat', Helvetica, Arial, serif;
+    flex: 0 0 110px;
+    min-width: 80px;
+    max-width: 160px;
+  
+    display: flex;
+    align-items: center;     /* ✅ vertical centering */
+    line-height: 1;          /* no extra line offset */
+    height: auto;            /* remove fixed 30px lock */
+    
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  
+  /* Dotted line: flexible element between label and input - dynamic dots */
+  .formFieldLabelWithDots { 
+    display: flex; 
+    align-items: center; 
+    width: 100%; 
+    gap: 0.25rem; 
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .formFieldLabelText { 
+    font-weight: 500; 
+    color: var(--mui-palette-text-secondary); 
+    font-size: .875rem; 
+    white-space: nowrap; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    flex: 0 0 auto;
+    max-width: 120px;
+  }
+  .formFieldDottedLine {
+    flex: 1 1 auto;
+    border-bottom: 1px dotted var(--mui-palette-divider);
+    height: 1px;
+    margin-left: 0.25rem;
+    margin-right: 0.25rem;
+    min-width: 20px;
+    overflow: hidden;
+  }
+  
+  /* Input wrapper - dynamic width with min 250px */
+  .formField {
+    flex: 1 1 auto;
+    min-width: 250px;
+    max-width: 100%;
+    margin-right: 1rem; /* Horizontal margin between attributes */
+  }
+
+  /* Grid item spacing for horizontal margins between attributes */
+  .MuiGrid-item {
+    margin-right: 1rem !important;
+    margin-bottom: 1rem !important;
+  }
+  
+  /* -----------------------------
+     Final sizing rules
+     - DEFAULT inputs: 28px high
+     - .compact container: 24px high
+     - .smallField: wide (320px)
+     ----------------------------- */
+  
+  /* DEFAULT: compact-ish inputs for the whole form */
+  .formFieldInput .MuiOutlinedInput-root {
+    height: 30px;
+    min-height: 30px;
+    border-radius: 0.357rem;
+  }
+  .formFieldInput .MuiOutlinedInput-input {
+    padding: 6px 12px;
+    font-size: 1rem; /* 16px - base font size */
+    line-height: 1.45; /* Base line height */
+    font-family: 'Montserrat', Helvetica, Arial, serif;
+    font-weight: 400;
+    color: var(--mui-palette-text-primary);
+  }
+  
+  /* native fallback inputs (default) - dynamic width, min 250px */
+  .formField input,
+  .formField select,
+  .formField textarea {
+    width: 100%;
+    min-width: 250px;
+    height: 30px;
+    padding: 6px 12px;
+    font-size: 1rem; /* 16px - base font size */
+    line-height: 1.45; /* Base line height */
+    font-family: 'Montserrat', Helvetica, Arial, serif;
+    font-weight: 400;
+    color: var(--mui-palette-text-primary);
+    border: 1px solid var(--mui-palette-divider);
+    border-radius: 0.357rem;
+    background: var(--mui-palette-background-paper);
+    box-sizing: border-box;
+    outline: none;
+  }
+  .formField textarea {
+    height: auto;
+    min-height: 3rem;
+    resize: vertical;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+  
+  /* focus ring for native inputs */
+  .formField input:focus,
+  .formField textarea:focus,
+  .formField select:focus {
+   border-color: var(--entity-card-primary, var(--input-focus));
+    box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+  }
+  
+  /* .compact = make everything extra short (apply to container) => 28px */
+  .compact .formFieldInput .MuiOutlinedInput-root {
+    height: 28px;
+    min-height: 28px;
+  }
+  .compact .formFieldInput .MuiOutlinedInput-input {
+    padding: 4px 10px;
+    font-size: 0.875rem; /* 14px - small button size */
+    font-family: 'Montserrat', Helvetica, Arial, serif;
+    font-weight: 400;
+    color: var(--mui-palette-text-primary);
+  }
+  .compact .formField input,
+  .compact .formField select,
+  .compact .formField textarea {
+    height: 28px;
+    min-width: 250px;
+    padding: 4px 10px;
+    font-size: 0.85rem;
+  }
+  .compact .formField textarea { min-height: 2.5rem; }
+  
+  /* .smallField = per-field WIDER + short (use on Grid item or wrapper) */
+  .smallField {
+    max-width: 400px;
+    min-width: 300px;
+    width: 400px;
+  }
+  .smallField .formFieldInput .MuiOutlinedInput-root {
+    height: 30px;
+    min-height: 30px;
+  }
+  .smallField .formFieldInput .MuiOutlinedInput-input {
+    padding: 6px 12px;
+    font-size: 1rem; /* 16px - base font size */
+    font-family: 'Montserrat', Helvetica, Arial, serif;
+    font-weight: 400;
+    color: var(--mui-palette-text-primary);
+  }
+  .smallField .formField input,
+  .smallField .formField select,
+  .smallField .formField textarea {
+    height: 30px;
+    min-width: 300px;
+    padding: 6px 12px;
+    font-size: 0.95rem;
+  }
+  
+  /* MUI outline / focus */
+  .formFieldInput .MuiOutlinedInput-notchedOutline { border-color: var(--mui-palette-divider); }
+  .formFieldInput .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline { border-color: var(--mui-palette-divider); }
+  .formFieldInput .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+   border-color: var(--entity-card-primary, var(--input-focus));
+    border-width: 1px;
+  }
+  .formFieldInput .MuiOutlinedInput-root.Mui-focused { box-shadow: 0 3px 10px rgba(0,0,0,0.1); }
+  
+  /* icons in fields */
+  .formFieldIcon { margin-right: 0.5rem; color: var(--mui-palette-text-secondary); }
+  
+  /* Loading / empty states */
+  .loadingContainer { display: flex; justify-content: center; padding: 2rem; }
+  .errorContainer { margin-bottom: 1.5rem; }
+  .noFieldsContainer { text-align: center; padding: 2rem 0; }
+  .noFieldsText { color: var(--mui-palette-text-secondary); font-size: 1.125rem; }
+  
+  /* -----------------------------
+     Responsive adjustments
+     ----------------------------- */
+  @media (max-width: 1100px) {
+    .breadcrumbWrapper { display: none; }
+    .breadcrumbsTop .contentHeaderTitle { display: contents !important; }
+  }
+  
+  @media (max-width: 768px) {
+    .contentHeader { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+    .contentHeaderLeft { width: 100%; margin-bottom: 1rem; }
+    .contentHeaderRight { justify-content: flex-start; text-align: left; width: 100%; }
+    .buttonVariant { padding: 0.5rem 0.6rem; }
+    .formFieldLabel { flex: 0 0 90px; min-width: 60px; }
+    .formFieldDottedLine { display: none; } /* hide dotted line on tight screens */
+    /* make compact inputs slightly smaller on small screens */
+    .compact .formField input,
+    .compact .formField select,
+    .compact .formField textarea { height: 22px; padding: 3px 6px; font-size: 0.78rem; }
+  }
+  
+  @media (max-width: 420px) {
+    .formFieldLabel { display: none; } /* hide labels for extreme small screens */
+    .formFieldLabelWithDots { display: none; }
+  }
+  
+  /* hover subtle lift on buttons */
+  .buttonVariant:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  
+  /* smooth transitions for accordion */
+  .accordionSummary,
+  .accordionDetails { transition: all 0.15s ease-in-out; }
+  

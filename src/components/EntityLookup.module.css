@@ -1,0 +1,927 @@
+/* EntityLookup.module.css
+   Sophisticated lookup/dropdown component with searchable modal interface
+   Compatible with Next.js CSS Modules (Turbopack)
+*/
+
+/* -----------------------------
+   Global variables & box-sizing
+   ----------------------------- */
+:global(:root) {
+  --card-border: #ebe9f1;
+  --muted-1: #6e6b7b;
+  --muted-2: #5e5873;
+  --input-border: #d8d6de;
+  --input-focus: #7367f0;
+  --danger: #ea5455;
+  --success: #28c76f;
+  --warning: #ff9f43;
+  --info: #00cfe8;
+  --dot-border: #999;
+  --readonly-bg: #fefcfc;
+}
+
+/* global box-sizing reset must be marked global for css modules */
+:global(*),
+:global(*::before),
+:global(*::after) {
+  box-sizing: border-box;
+}
+
+/* -----------------------------
+   Input Group Styling - Matching regular input fields
+   ----------------------------- */
+.inputGroup {
+  position: relative;
+  width: 100%;
+}
+
+.inputWrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: flex-start; /* Align to top for proper label alignment */
+  background: var(--mui-palette-background-paper);
+  border-radius: 0.357rem;
+  overflow: visible; /* Allow content to expand */
+  min-height: 30px; /* Maintain minimum height like input field */
+}
+
+/* Native input field - EXACTLY matching regular input styling */
+.lookupInput {
+  width: 100%;
+  min-width: 250px;
+  height: 30px;
+  padding: 6px 12px; /* Same padding as regular inputs */
+  padding-right: 2.5rem; /* Make room for search icon and divider */
+  font-size: 0.95rem;
+  line-height: 1.1; /* Match regular inputs */
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 0.357rem;
+  background: var(--mui-palette-background-paper);
+  color: var(--mui-palette-text-primary);
+  box-sizing: border-box;
+  outline: none;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.lookupInput:focus {
+  border-color: var(--mui-palette-primary-main);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+}
+
+[data-dark] .lookupInput:focus {
+  box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+}
+
+.lookupInput:disabled {
+  background-color: var(--mui-palette-action-disabledBackground);
+  cursor: not-allowed;
+  color: var(--mui-palette-text-disabled);
+}
+
+/* Read-only input styling - matching Vue.js readonly behavior */
+.lookupInput:read-only {
+  background-color: var(--mui-palette-action-hover);
+  cursor: pointer;
+}
+
+/* Read-only input styling */
+.readonlyInput {
+  width: 100%;
+}
+
+.readonlyInput .MuiOutlinedInput-root {
+  background-color: var(--readonly-bg);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.readonlyInput .MuiOutlinedInput-root:hover {
+  border-color: var(--input-focus);
+}
+
+.readonlyInput .MuiOutlinedInput-root.Mui-focused {
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 0.2rem rgba(115, 103, 240, 0.25);
+}
+
+.readonlyInput .MuiOutlinedInput-input {
+  color: var(--mui-palette-text-primary);
+  font-size: 1rem;
+  line-height: 1.45;
+  padding: 0.438rem 1rem;
+  cursor: pointer;
+}
+
+/* Size variants */
+.readonlyInput .MuiOutlinedInput-root.MuiInputBase-sizeSmall {
+  height: 2.142rem;
+}
+
+.readonlyInput .MuiOutlinedInput-root.MuiInputBase-sizeSmall .MuiOutlinedInput-input {
+  padding: 0.25rem 0.857rem;
+  font-size: 0.875rem;
+}
+
+/* Search icon styling - inside input field */
+.searchIconContainer {
+  position: absolute;
+  right: 2.95em; /* was 0.25rem → moved more to the left */
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+/* Vertical divider line before search icon */
+.searchIconContainer::before {
+  content: '';
+  position: absolute;
+  left: -7px; /* was -8px → slides divider more left */
+  top: -2px;
+  width: 0.5px;
+  height: calc(100% + 4px);
+  background-color: var(--mui-palette-divider);
+  z-index: 1;
+}
+
+
+.searchIcon {
+  color: var(--mui-palette-text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  pointer-events: auto;
+}
+
+/* -----------------------------
+   Modal Styling
+   ----------------------------- */
+.modal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modalContent {
+  background: var(--mui-palette-background-paper);
+  border-radius: 0.428rem;
+  box-shadow: 0 4px 24px 0 rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--mui-palette-divider);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+[data-dark] .modalContent {
+  box-shadow: 0 4px 24px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Modal Header */
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--mui-palette-divider);
+  background-color: var(--mui-palette-background-paper);
+}
+
+.modalTitle {
+  font-size: 1.25rem; /* 20px - card title size */
+  font-weight: 500;
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+  color: var(--mui-palette-text-primary);
+  margin: 0;
+}
+
+.headerActions {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.headerButton {
+  padding: 0.5rem;
+  color: var(--mui-palette-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.headerButton:hover {
+  color: var(--mui-palette-primary-main);
+  background-color: var(--mui-palette-action-hover);
+}
+
+/* Button Icon Styling - 29.6px height */
+.btnIcon {
+  padding: 0.4rem 0.5rem;
+  min-width: auto;
+  height: 1.85rem; /* 29.6px */
+  border-radius: 0.358rem;
+  font-weight: 500;
+  font-size: 1rem; /* 16px - base font size */
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+  text-transform: none;
+  box-shadow: none;
+  border: 1px solid;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease-in-out;
+  background: transparent;
+}
+
+.btnIcon:focus,
+.btnIcon:active {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Small size variant - Matching EntityCard button size */
+.btnIcon.btn-sm {
+  padding: 0.3rem 0.4rem;
+  line-height: 0.5;
+  font-size: 0.875rem; /* 14px - small button size */
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+}
+
+/* Icon styling - 14px size for header icons */
+.btnIcon i,
+.btnIcon svg {
+  width: 0.875rem; /* 14px */
+  height: 0.875rem; /* 14px */
+  font-size: 0.875rem;
+}
+
+/* Button Variants - Matching Vue.js Colors */
+.btnIcon.MuiButton-outlined.MuiButton-colorSuccess {
+  color: #28c76f;
+  border-color: #28c76f;
+}
+
+.btnIcon.MuiButton-outlined.MuiButton-colorSuccess:hover {
+  background-color: #28c76f;
+  color: #fff;
+}
+
+.btnIcon.MuiButton-outlined.MuiButton-colorPrimary {
+  color: #7367f0;
+  border-color: #7367f0;
+}
+
+.btnIcon.MuiButton-outlined.MuiButton-colorPrimary:hover {
+  background-color: #7367f0;
+  color: #fff;
+}
+
+.btnIcon.MuiButton-outlined.MuiButton-colorSecondary {
+  color: #6e6b7b;
+  border-color: #6e6b7b;
+}
+
+.btnIcon.MuiButton-outlined.MuiButton-colorSecondary:hover {
+  background-color: #6e6b7b;
+  color: #fff;
+}
+
+/* Search Section - Matching Vue.js Layout */
+.searchSection {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--mui-palette-divider);
+  background-color: var(--mui-palette-background-paper);
+}
+
+.textRight {
+  text-align: right;
+}
+
+/* -----------------------------
+   ✅ Normalize Lookup Search Input
+   Match height + width + padding with .lookupInput
+   ----------------------------- */
+.searchInput {
+  width: 100% !important;
+  min-width: 250px !important;     /* ✅ same as .lookupInput */
+  max-width: 100% !important;
+  box-sizing: border-box;
+}
+
+.searchInput .MuiOutlinedInput-root {
+  border-radius: 0.357rem !important;   /* Match outside field */
+  height: 30px !important;              /* ✅ Force same height */
+  min-height: 30px !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+  .searchInput .MuiOutlinedInput-input {
+    padding: 6px 12px !important;         /* ✅ Same padding */
+    font-size: 1rem !important;           /* 16px - base font size */
+    line-height: 1.45 !important;        /* Base line height */
+    height: 30px !important;
+    width: 100% !important;              /* ✅ same stretch as outside */
+    font-family: 'Montserrat', Helvetica, Arial, serif !important;
+    font-weight: 400 !important;
+    color: var(--mui-palette-text-primary) !important;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+  }
+
+  
+  .searchInput .MuiOutlinedInput-notchedOutline {
+    border-color: var(--mui-palette-divider);
+  }
+  
+  .searchInput .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+    border-color: var(--mui-palette-divider);
+  }
+  
+  .searchInput .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+    border-color: var(--mui-palette-primary-main);
+    border-width: 1px;
+  }
+  
+  .searchInput .MuiOutlinedInput-root.Mui-focused {
+    box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+  }
+  
+  [data-dark] .searchInput .MuiOutlinedInput-root.Mui-focused {
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+  }
+  
+/* Refresh button - matching search input height exactly (30px) */
+.refreshButton {
+  height: 30px !important;
+  min-width: 30px !important;
+  padding: 0.25rem !important;
+  border-radius: 0.357rem !important;
+  font-size: 0.875rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.refreshButton svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* Data Grid Container */
+.dataGridContainer {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 0.357rem;
+  margin: 1rem;
+  background-color: var(--mui-palette-background-paper);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+[data-dark] .dataGridContainer {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Loading Container */
+.loadingContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  gap: 1rem;
+}
+
+/* Error Alert */
+.errorAlert {
+  margin: 1rem;
+}
+
+/* No Data Container */
+.noDataContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--mui-palette-text-secondary);
+}
+
+/* Data Table */
+.dataTable {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 0.357rem;
+  margin: 1rem;
+  background-color: var(--mui-palette-background-paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+[data-dark] .dataTable {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Data Row */
+.dataRow {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--mui-palette-divider);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  color: var(--mui-palette-text-primary);
+}
+
+.dataRow:hover {
+  background-color: var(--mui-palette-action-hover);
+}
+
+.dataRow:last-child {
+  border-bottom: none;
+}
+
+/* Data Cell */
+.dataCell {
+  padding: 0 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataCell:first-child {
+  padding-left: 0;
+}
+
+.dataCell:last-child {
+  padding-right: 0;
+}
+
+/* -----------------------------
+   Responsive Design
+   ----------------------------- */
+@media (max-width: 768px) {
+  .modalContent {
+    width: 95vw !important;
+    height: 90vh !important;
+    margin: 0.5rem;
+  }
+  
+  .modalHeader {
+    padding: 0.75rem 1rem;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  
+  .headerActions {
+    justify-content: center;
+  }
+  
+  .searchSection {
+    padding: 0.75rem 1rem;
+  }
+  
+  .dataTable {
+    margin: 0.5rem;
+  }
+  
+  .dataRow {
+    padding: 0.5rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .dataCell {
+    width: 100%;
+    padding: 0;
+    white-space: normal;
+    word-wrap: break-word;
+  }
+}
+
+@media (max-width: 480px) {
+  .modalContent {
+    width: 100vw !important;
+    height: 100vh !important;
+    border-radius: 0;
+    margin: 0;
+  }
+  
+  .modalHeader {
+    padding: 0.5rem;
+  }
+  
+  .searchSection {
+    padding: 0.5rem;
+  }
+  
+  .dataTable {
+    margin: 0.25rem;
+  }
+}
+
+/* -----------------------------
+   Animation & Transitions
+   ----------------------------- */
+.modalContent {
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.dataRow {
+  animation: rowFadeIn 0.2s ease-out;
+}
+
+@keyframes rowFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* -----------------------------
+   Focus & Accessibility
+   ----------------------------- */
+.dataRow:focus {
+  outline: 2px solid var(--mui-palette-primary-main);
+  outline-offset: -2px;
+}
+
+.dataRow:focus-visible {
+  outline: 2px solid var(--mui-palette-primary-main);
+  outline-offset: -2px;
+}
+
+/* Keyboard navigation */
+.dataRow[tabindex="0"]:focus {
+  background-color: var(--mui-palette-action-selected);
+}
+
+/* -----------------------------
+   Scrollbar Styling
+   ----------------------------- */
+.dataTable::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dataTable::-webkit-scrollbar-track {
+  background: var(--mui-palette-action-hover);
+  border-radius: 3px;
+}
+
+.dataTable::-webkit-scrollbar-thumb {
+  background: var(--mui-palette-divider);
+  border-radius: 3px;
+}
+
+.dataTable::-webkit-scrollbar-thumb:hover {
+  background: var(--mui-palette-text-secondary);
+}
+
+/* -----------------------------
+   Utility Classes
+   ----------------------------- */
+.cursorPointer {
+  cursor: pointer;
+}
+
+.textRight {
+  text-align: right;
+}
+
+.w100 {
+  width: 100%;
+}
+
+.mr50 {
+  margin-right: 0.5rem;
+}
+
+/* -----------------------------
+   Button Variants
+   ----------------------------- */
+.btnOutlineSuccess {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.btnOutlineSuccess:hover {
+  background-color: var(--success);
+  color: #fff;
+}
+
+.btnOutlinePrimary {
+  color: var(--input-focus);
+  border-color: var(--input-focus);
+}
+
+.btnOutlinePrimary:hover {
+  background-color: var(--input-focus);
+  color: #fff;
+}
+
+.btnOutlineSecondary {
+  color: var(--muted-1);
+  border-color: var(--muted-1);
+}
+
+.btnOutlineSecondary:hover {
+  background-color: var(--muted-1);
+  color: #fff;
+}
+
+/* Pagination */
+.pagination {
+  margin-top: 1rem;
+  border-top: 1px solid var(--mui-palette-divider);
+  padding: 1rem;
+  background-color: var(--mui-palette-background-paper);
+  border-radius: 0 0 0.357rem 0.357rem;
+}
+
+/* Pagination Info Row */
+.paginationInfo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--mui-palette-divider);
+  margin-top: 0.5rem;
+  font-size: 0.857rem;
+  color: var(--mui-palette-text-secondary);
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+}
+
+.paginationDivider {
+  height: 1px;
+  background-color: var(--mui-palette-divider);
+  margin: 0.5rem 0;
+}
+
+/* -----------------------------
+   Filter Components - Updated
+   ----------------------------- */
+.filterIcon {
+  color: var(--mui-palette-text-secondary);
+  transition: color 0.2s ease;
+  cursor: pointer;
+}
+
+.filterIcon:hover,
+.filterIcon.active {
+  color: var(--mui-palette-primary-main);
+}
+
+/* Dropdown wrapper */
+.filterControlsVertical {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%; /* ✅ match trigger width */
+  background: var(--mui-palette-background-paper);
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 6px;
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 4px 8px rgba(0, 0, 0, 0.08),
+    0 2px 4px rgba(0, 0, 0, 0.04);
+  padding: 8px;
+  transform: translateY(0);
+  transition: all 0.2s ease-in-out;
+  animation: filterFadeIn 0.2s ease-out;
+  --trigger-width: 100%;
+}
+
+[data-dark] .filterControlsVertical {
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.3),
+    0 4px 8px rgba(0, 0, 0, 0.2),
+    0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.filterTypeDropdown {
+  width: 100% !important;
+  min-width: 250px;  /* same as .lookupInput */
+  position: relative;
+}
+
+
+.filterTypeDropdown .MuiOutlinedInput-root {
+  height: 28px;
+  font-size: 0.875rem; /* match table rows */
+  border-radius: 0.25rem;
+}
+
+.filterTypeDropdown .MuiOutlinedInput-input {
+  font-size: 0.875rem;
+}
+
+/* Ensure filter value input also fills */
+.filterValueInput {
+  flex: 1;
+  width: 100% !important; /* ✅ match dropdown width */
+}
+
+.filterValueInput .MuiOutlinedInput-root {
+  height: 28px;
+  font-size: 0.875rem;
+  border-radius: 0.25rem;
+}
+
+.filterValueInput .MuiOutlinedInput-input {
+  padding: 4px 8px;
+  font-size: 0.875rem;
+}
+
+
+.filterValueInputSmall {
+  width: 100%;
+  min-height: 24px;
+}
+
+.filterValueInputSmall .MuiOutlinedInput-root {
+  min-height: 24px;
+  font-size: 0.65rem; /* compact mode kept */
+  border-radius: 0.2rem;
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+  font-weight: 400;
+}
+
+.filterValueInputSmall .MuiOutlinedInput-input {
+  padding: 4px 8px;
+  font-size: 0.65rem; /* compact mode kept */
+  font-family: 'Montserrat', Helvetica, Arial, serif;
+  font-weight: 400;
+}
+
+/* Compact dropdown menu */
+.filterMenu {
+  max-height: 200px;
+  padding: 0.15rem 0;  /* less vertical space */
+  overflow-y: auto;
+}
+
+/* Dropdown items */
+.filterMenuItem {
+  font-size: 0.6875rem !important;   /* force smaller font (~11px) */
+  padding: 0.2rem 0.5rem !important; /* tighter spacing */
+  min-height: 22px !important;       /* reduce row height */
+  line-height: 1.1 !important;
+}
+
+/* Icon spacing fix */
+.filterMenuItem .MuiListItemIcon-root {
+  min-width: 18px !important;        /* shrink icon gap */
+}
+
+/* Text inside dropdown */
+.filterMenuItem .MuiListItemText-primary {
+  font-size: 0.6875rem !important;
+  font-family: 'Montserrat', Helvetica, Arial, serif !important;
+  font-weight: 400 !important;
+}
+/* -----------------------------
+   Force Compact Dropdown Items (MUI Override)
+   ----------------------------- */
+:global(.MuiMenuItem-root) {
+  font-size: 0.6875rem !important;   /* ~11px font */
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+  min-height: 22px !important;       /* shrink row height */
+  line-height: 1.2 !important;
+  font-family: 'Montserrat', Helvetica, Arial, serif !important;
+}
+
+:global(.MuiMenuItem-root .MuiListItemText-primary) {
+  font-size: 0.6875rem !important;
+  font-family: 'Montserrat', Helvetica, Arial, serif !important;
+  font-weight: 400 !important;
+}
+
+:global(.MuiMenuItem-root .MuiListItemIcon-root) {
+  min-width: 18px !important; /* tighten icon spacing */
+}
+/* -----------------------------
+   Compact Select Trigger ("CONTENT")
+   ----------------------------- */
+:global(.MuiSelect-select) {
+  font-size: 0.6875rem !important;   /* match dropdown */
+  padding: 4px 8px !important;       /* less padding */
+  min-height: 22px !important;
+  line-height: 1.2 !important;
+  font-family: 'Montserrat', Helvetica, Arial, serif !important;
+}
+
+/* -----------------------------
+   Compact Input Fields
+   ----------------------------- */
+:global(.MuiInputBase-root) {
+  font-size: 0.6875rem !important;   /* smaller input text */
+  padding: 0 !important;
+  min-height: 28px !important;       /* keep inputs usable */
+}
+
+:global(.MuiInputBase-input) {
+  font-size: 0.6875rem !important;
+  padding: 4px 6px !important;       /* shrink text area */
+  line-height: 1.2 !important;
+  font-family: 'Montserrat', Helvetica, Arial, serif !important;
+}
+/* Center text properly inside dropdown trigger */
+:global(.MuiSelect-select) {
+  font-size: 0.75rem !important;      /* small font but readable */
+  padding: 4px 8px !important;        /* balanced padding */
+  min-height: 28px !important;        /* keep room for vertical centering */
+  line-height: 1.5 !important;        /* let MUI handle vertical centering */
+  display: flex !important;
+  align-items: center !important;     /* force vertical centering */
+}
+
+/* Keep rounded corners on outlined input */
+:global(.MuiOutlinedInput-root) {
+  border-radius: 0.357rem !important; /* restore curves */
+  min-height: 28px !important;        /* ensure enough height */
+  display: flex;
+  align-items: center;
+}
+
+:global(.MuiOutlinedInput-notchedOutline) {
+  border-radius: 0.357rem !important; /* sync outline radius */
+}
+
+/* Trigger button */
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 0.5rem;
+  background: var(--mui-palette-background-paper);
+  cursor: pointer;
+  color: var(--mui-palette-text-secondary);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+/* Hover/active */
+.trigger:hover,
+.trigger:focus {
+  color: var(--mui-palette-primary-main);
+  border-color: var(--mui-palette-primary-main);
+}
+
+/* Dropdown menu */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 100%; /* 👈 force same width as trigger */
+  background: var(--mui-palette-background-paper);
+  border: 1px solid var(--mui-palette-divider);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+  z-index: 100;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+[data-dark] .dropdown {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
