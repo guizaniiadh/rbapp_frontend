@@ -46,6 +46,9 @@ import { loginStart, loginSuccess, loginFailure } from '@/redux-store/slices/aut
 // Util Imports
 import { getLocalizedUrl } from '@/utils/i18n'
 import { getDictionaryClient } from '@/utils/getDictionaryClient'
+
+// Backend URL from environment variable
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
   
 // Styled Custom Components
 const LoginIllustration = styled('img')(({ theme }) => ({
@@ -150,7 +153,7 @@ const LoginV2 = ({ mode }: { mode: SystemMode }) => {
 
     try {
       // Step 1: Get JWT tokens from Django REST Framework
-      const tokenResponse = await fetch('http://localhost:8000/api/token/', {
+      const tokenResponse = await fetch(`${BASE_URL}/api/token/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -181,7 +184,7 @@ const LoginV2 = ({ mode }: { mode: SystemMode }) => {
       }
 
       // Step 2: Get user data using the access token
-      const userResponse = await fetch('http://localhost:8000/api/current-user/', {
+      const userResponse = await fetch(`${BASE_URL}/api/current-user/`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${tokenData.access}`,

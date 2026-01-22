@@ -39,6 +39,9 @@ import { useSettings } from '@core/hooks/useSettings'
 import { getLocalizedUrl } from '@/utils/i18n'
 import { getDictionaryClient } from '@/utils/getDictionaryClient'
 
+// Backend URL from environment variable
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+
 // Styled Custom Components
 const RegisterIllustration = styled('img')(({ theme }) => ({
   zIndex: 2,
@@ -144,7 +147,7 @@ const RegisterV2 = ({ mode }: { mode: SystemMode }) => {
     setError(null)
 
     try {
-      const response = await fetch('http://localhost:8000/api/register/', {
+      const response = await fetch(`${BASE_URL}/api/register/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
