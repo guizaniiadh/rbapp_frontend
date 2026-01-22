@@ -51,12 +51,12 @@ export type ShortcutsType = {
 
 const ScrollWrapper = ({ children, hidden }: { children: ReactNode; hidden: boolean }) => {
   if (hidden) {
-    return <div className='overflow-x-hidden bs-full'>{children}</div>
+    return <>{children}</>
   } else {
     return (
-      <PerfectScrollbar className='bs-full' options={{ wheelPropagation: false, suppressScrollX: true }}>
+      <div style={{ maxHeight: '80vh', overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
         {children}
-      </PerfectScrollbar>
+      </div>
     )
   }
 }
@@ -102,18 +102,6 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
     setOpen(prevOpen => !prevOpen)
   }, [])
 
-  useEffect(() => {
-    const adjustPopoverHeight = () => {
-      if (ref.current) {
-        // Calculate available height, subtracting any fixed UI elements' height as necessary
-        const availableHeight = window.innerHeight - 100
-
-        ref.current.style.height = `${Math.min(availableHeight, 550)}px`
-      }
-    }
-
-    window.addEventListener('resize', adjustPopoverHeight)
-  }, [])
 
   return (
     <>
@@ -129,7 +117,7 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
         anchorEl={anchorRef.current}
         {...(isSmallScreen
           ? {
-              className: `is-full  !mbs-3 z-[9999] max-bs-[517px] ${size === 'small' ? 'shortcuts-small' : ''}`,
+              className: `is-full !mbs-3 z-[9999] ${size === 'small' ? 'shortcuts-small' : ''}`,
               modifiers: [
                 {
                   name: 'preventOverflow',
@@ -139,13 +127,21 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                 }
               ]
             }
-          : { className: `is-96  !mbs-3 z-[9999] max-bs-[517px] ${size === 'small' ? 'shortcuts-small' : ''}` })}
+          : { 
+              className: `is-96 !mbs-3 z-[9999] ${size === 'small' ? 'shortcuts-small' : ''}`
+            })}
       >
         {({ TransitionProps, placement }) => (
           <Fade {...TransitionProps} style={{ transformOrigin: placement === 'bottom-end' ? 'right top' : 'left top' }}>
             <Paper 
-              className={classnames('bs-full', settings.skin === 'bordered' ? 'border shadow-none' : 'shadow-lg')}
-              sx={size === 'small' ? {
+              className={classnames(settings.skin === 'bordered' ? 'border shadow-none' : 'shadow-lg')}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                width: '100%',
+                maxHeight: '80vh',
+                overflow: 'hidden',
+                ...(size === 'small' ? {
                 transform: 'scale(0.6)',
                 transformOrigin: 'top right',
                 '& .MuiAvatar-root': {
@@ -170,7 +166,7 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                 '& [class*="p-6"]': {
                   padding: '12px !important'
                 }
-              } : size === 'medium' ? {
+                } : size === 'medium' ? {
                 transform: 'scale(0.8)',
                 transformOrigin: 'top right',
                 '& .MuiAvatar-root': {
@@ -195,12 +191,13 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                 '& [class*="p-6"]': {
                   padding: '16px !important'
                 }
-              } : {}}
+                } : {})
+              }}
             >
               <ClickAwayListener onClickAway={handleClose}>
-                <div className='bs-full flex flex-col'>
-                  <div className='flex items-center justify-between plb-3.5 pli-4 is-full gap-2'>
-                    <Typography variant='h6' className='flex-auto'>
+                <div className='flex flex-col' style={{ minHeight: 0, overflow: 'hidden' }}>
+                  <div className='flex items-center justify-between py-2.5 px-3 gap-2 flex-shrink-0'>
+                    <Typography variant='h6' className='flex-auto' sx={{ fontSize: '0.9375rem' }}>
                       {safeDictionary?.navigation?.shortcuts || 'Shortcuts'}
                     </Typography>
                     <Tooltip
@@ -224,7 +221,7 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                   </div>
                   <Divider />
                   <ScrollWrapper hidden={hidden}>
-                    <Grid container>
+                    <Grid container sx={{ overflow: 'hidden', width: '100%' }}>
                       {shortcuts.map((shortcut, index) => {
                         const handleShortcutClick = () => {
                           if (shortcut.onClick) {
@@ -234,15 +231,20 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                         }
 
                         const content = (
-                          <div className='flex items-center flex-col p-6 gap-3 bs-full hover:bg-actionHover cursor-pointer'>
-                            <CustomAvatar size={50} className='bg-actionSelected text-textPrimary'>
-                              <i className={classnames('text-[1.625rem]', shortcut.icon)} />
+                          <div
+                            className='flex items-center flex-col justify-center p-4 gap-2 cursor-pointer h-full min-h-[88px] w-full'
+                            style={{ overflow: 'hidden', boxSizing: 'border-box' }}
+                          >
+                            <CustomAvatar size={40} className='bg-actionSelected text-textPrimary flex-shrink-0'>
+                              <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
-                            <div className='flex flex-col items-center text-center'>
-                              <Typography className='font-medium' color='text.primary'>
+                            <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
+                              <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                                 {shortcut.title}
                               </Typography>
-                              <Typography variant='body2'>{shortcut.subtitle}</Typography>
+                              {shortcut.subtitle && (
+                                <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{shortcut.subtitle}</Typography>
+                              )}
                             </div>
                           </div>
                         )
@@ -251,22 +253,33 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                         <Grid
                           size={{ xs: 6 }}
                           key={index}
-                            onClick={shortcut.onClick ? handleShortcutClick : handleClose}
+                          onClick={shortcut.onClick ? handleShortcutClick : handleClose}
                           className='[&:not(:last-of-type):not(:nth-last-of-type(2))]:border-be odd:border-ie'
+                          sx={{
+                            '&:hover': { bgcolor: 'action.hover' },
+                            cursor: 'pointer',
+                            overflow: 'hidden',
+                            minHeight: 88,
+                            display: 'flex',
+                            alignItems: 'stretch'
+                          }}
                         >
                             {shortcut.url ? (
                           <Link
                             href={getLocalizedUrl(shortcut.url, locale as Locale)}
-                            className='flex items-center flex-col p-6 gap-3 bs-full hover:bg-actionHover'
+                            className='flex items-center flex-col justify-center p-4 gap-2 h-full min-h-[88px] w-full'
+                            style={{ overflow: 'hidden', textDecoration: 'none', color: 'inherit', boxSizing: 'border-box' }}
                           >
-                            <CustomAvatar size={50} className='bg-actionSelected text-textPrimary'>
-                              <i className={classnames('text-[1.625rem]', shortcut.icon)} />
+                            <CustomAvatar size={40} className='bg-actionSelected text-textPrimary flex-shrink-0'>
+                              <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
-                            <div className='flex flex-col items-center text-center'>
-                              <Typography className='font-medium' color='text.primary'>
+                            <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
+                              <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                                 {shortcut.title}
                               </Typography>
-                              <Typography variant='body2'>{shortcut.subtitle}</Typography>
+                              {shortcut.subtitle && (
+                                <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{shortcut.subtitle}</Typography>
+                              )}
                             </div>
                           </Link>
                             ) : (

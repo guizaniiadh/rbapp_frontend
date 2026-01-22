@@ -267,6 +267,63 @@ class RecoBankTransactionService {
       return fallback
     }
   }
+
+  /**
+   * Get sum of matched bank transactions
+   * Uses the bank-specific endpoint: /api/{bank_code}/sum-matched-bank-transactions/
+   * @param bankCode - The bank code (e.g., "1", "2", "4")
+   * @param options - Optional filters
+   * @returns Sum of matched bank transactions with optional details
+   */
+  async getSumMatchedTransactions(
+    bankCode: string,
+    options?: {
+      detail?: boolean
+      bank_id?: number
+      type?: string
+    }
+  ): Promise<{
+    total_sum: string
+    total_sum_decimal: number
+    count: number
+    message: string
+    transactions?: any[]
+    transactions_returned?: number
+  }> {
+    try {
+      console.log('📊 Fetching sum of matched bank transactions...')
+      const bankPrefix = getBankApiPrefix(bankCode)
+      const endpoint = `${bankPrefix}/sum-matched-bank-transactions/`
+      
+      const params: any = {}
+      if (options?.detail) params.detail = 'true'
+      if (options?.bank_id) params.bank_id = options.bank_id
+      if (options?.type) params.type = options.type
+      
+      const response = await apiClient.get<{
+        total_sum: string
+        total_sum_decimal: number
+        count: number
+        message: string
+        transactions?: any[]
+        transactions_returned?: number
+      }>(endpoint, { params })
+      
+      console.log('✅ Sum of matched bank transactions:', response.data)
+      return response.data
+    } catch (error: any) {
+      console.error('❌ Error fetching sum of matched bank transactions:', error)
+      console.error('Response:', error?.response?.data)
+      console.error('Status:', error?.response?.status)
+      // Fallback to empty structure so UI still works
+      return {
+        total_sum: '0.000',
+        total_sum_decimal: 0,
+        count: 0,
+        message: 'Error loading matched transactions sum'
+      }
+    }
+  }
 }
 
 export const recoBankTransactionService = new RecoBankTransactionService()

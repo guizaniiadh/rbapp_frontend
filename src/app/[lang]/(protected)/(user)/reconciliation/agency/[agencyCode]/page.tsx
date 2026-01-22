@@ -90,7 +90,14 @@ import {
   ZoomOutMap,
   FitScreen,
   CropFree,
-  Circle
+  Circle,
+  Warning,
+  ReportProblem,
+  ErrorOutline,
+  RemoveCircleOutline,
+  SwapCalls,
+  Compare,
+  IndeterminateCheckBox
 } from '@mui/icons-material'
 
 // Component Imports
@@ -426,7 +433,7 @@ const pulseBlueAnimation = keyframes`
   }
 `
 
-const ReconciliationPage: React.FC = () => {
+export default function ReconciliationPage() {
   console.log('🔵 ReconciliationPage component rendered')
   const params = useParams()
   const pathname = usePathname()
@@ -765,9 +772,22 @@ const ReconciliationPage: React.FC = () => {
   const [totalDifferenceInput, setTotalDifferenceInput] = useState<string>('')
   const [totalDifferenceInputError, setTotalDifferenceInputError] = useState<string>('')
   
+  // Écart (gap/difference) state
+  const [ecart, setEcart] = useState<number | null>(null)
+  const [ecartInput, setEcartInput] = useState<string>('')
+  const [ecartInputError, setEcartInputError] = useState<string>('')
+  
   // Solde (running balance) state
   const [currentSolde, setCurrentSolde] = useState<number | null>(null)
-  const [clickedTransactionIds, setClickedTransactionIds] = useState<number[]>([])
+  const [clickedTransactionIds, setClickedTransactionIds] = useState<(number | string)[]>([])
+  
+  // Matched bank transactions sum state
+  const [matchedSum, setMatchedSum] = useState<{
+    total_sum: string
+    total_sum_decimal: number
+    count: number
+    message: string
+  } | null>(null)
   
   // Icon selection states
   const [selectedIcons, setSelectedIcons] = useState({
@@ -775,8 +795,10 @@ const ReconciliationPage: React.FC = () => {
     statementEndingBalance: 'Wallet' as string,
     balance: 'SwapVert' as string,
     totalDifference: 'SwapHoriz' as string,
+    ecart: 'CompareArrows' as string,
     endingBalance: 'Flag' as string
   })
+  
   
   const [customerImportBatchId, setCustomerImportBatchId] = useState<number | null>(null)
   const [customerTransactions, setCustomerTransactions] = useState<any[]>([])
@@ -826,6 +848,12 @@ const ReconciliationPage: React.FC = () => {
   
   
   const [paymentClasses, setPaymentClasses] = useState<PaymentClass[]>([])
+
+  // Assign internal number dialog state
+  const [assignInternalNumberOpen, setAssignInternalNumberOpen] = useState(false)
+  const [assignInternalNumberValue, setAssignInternalNumberValue] = useState('')
+  const [assignInternalNumberError, setAssignInternalNumberError] = useState<string | null>(null)
+  const [assignInternalNumberLoading, setAssignInternalNumberLoading] = useState(false)
   
   // Sort transactions by operation date (ascending)
   const sortTransactionsByOperationDate = useCallback((items: any[], isBank: boolean = true) => {
@@ -1907,75 +1935,89 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     }
   }, [taxComparisonResults])
 
-  // Calculate total tax difference (sum of all écarts in the High Matches tax rows)
+  // Get tax comparison data for a bank-customer transaction pair (for reconciliation tables)
+  const getTaxComparisonForPair = useCallback((bankTxId: number, customerTxId: number): { bankRows: InlineTaxRow[]; customerRows: InlineTaxRow[] } => {
+    const comparisonRows = taxComparisonResults.filter(tax => 
+      tax.matched_bank_transaction_id === bankTxId &&
+      tax.customer_transaction_id === customerTxId
+    )
+
+    const statusLookup = new Map<string, string>()
+    comparisonRows.forEach(row => {
+      if (row.tax_type) {
+        statusLookup.set(row.tax_type.toLowerCase(), row.status)
+      }
+    })
+
+    const mergeComparisonRows = (rows: InlineTaxRow[], side: 'bank' | 'customer') => {
+      comparisonRows.forEach((row, idx) => {
+        const sourceValue = side === 'bank'
+          ? row.bank_tax
+          : (row.tax_type === 'AGIOS' ? row.customer_total_tax : row.customer_tax)
+        if (sourceValue === null || sourceValue === undefined || sourceValue === '') return
+        if (!row.tax_type || row.tax_type.trim() === '') return
+        const taxName = row.tax_type
+        const normalizedKey = taxName.toLowerCase()
+        const existing = rows.find(taxRow => taxRow.name.toLowerCase() === normalizedKey)
+        if (existing) {
+          if (!existing.status && row.status) {
+            existing.status = row.status
+          }
+          if ((!existing.formattedValue || existing.formattedValue === '-') && sourceValue) {
+            existing.formattedValue = formatTaxValue(sourceValue)
+          }
+          if (!existing.type && row.status) {
+            existing.type = row.status
+          }
+          return
+        }
+        rows.push({
+          id: `${side}-${bankTxId}-${customerTxId}-comparison-${row.id || idx}`,
+          name: taxName,
+          type: row.status || '',
+          formattedValue: formatTaxValue(sourceValue),
+          status: row.status || null
+        })
+      })
+    }
+
+    const bankRows: InlineTaxRow[] = []
+    const customerRows: InlineTaxRow[] = []
+
+    mergeComparisonRows(bankRows, 'bank')
+    mergeComparisonRows(customerRows, 'customer')
+
+    return {
+      bankRows,
+      customerRows
+    }
+  }, [taxComparisonResults])
+
+  // Calculate total tax difference directly from the comparison API results
+  // This sums the `difference` field returned by the tax comparison API
   const computedTotalTaxDifference = useMemo(() => {
-    if (!highMatches.length) return null
+    if (!taxComparisonResults.length) return null
 
     let total = 0
     let hasAny = false
 
-    highMatches.forEach(match => {
-      const { bankRows, customerRows } = getInlineTaxData(match)
-
-      // Rebuild the combined tax map exactly like in the High Matches table
-      const allTaxes = new Map<string, { bankValue: string; customerValue: string; status: string | null }>()
-
-      bankRows.forEach(tax => {
-        const key = tax.name.toLowerCase()
-        const formatted = String(tax.formattedValue ?? '-')
-        if (!allTaxes.has(key)) {
-          allTaxes.set(key, {
-            bankValue: formatted,
-            customerValue: '-',
-            status: tax.status || null
-          })
-        } else {
-          const existing = allTaxes.get(key)!
-          existing.bankValue = formatted
-          if (tax.status && !existing.status) {
-            existing.status = tax.status
-          }
-        }
-      })
-
-      customerRows.forEach(tax => {
-        const key = tax.name.toLowerCase()
-        const formatted = String(tax.formattedValue ?? '-')
-        if (!allTaxes.has(key)) {
-          allTaxes.set(key, {
-            bankValue: '-',
-            customerValue: formatted,
-            status: tax.status || null
-          })
-        } else {
-          const existing = allTaxes.get(key)!
-          existing.customerValue = formatted
-          if (tax.status && !existing.status) {
-            existing.status = tax.status
-          }
-        }
-      })
-
-      let uniqueTaxes = Array.from(allTaxes.values())
-
-      // Respect the "hideMissingTaxes" toggle so the total matches what's visible
-      if (hideMissingTaxes) {
-        uniqueTaxes = uniqueTaxes.filter(tax => tax.status !== 'missing')
+    taxComparisonResults.forEach((tax: any) => {
+      // Respect the "hideMissingTaxes" toggle so the total matches what's visible in tax tables
+      if (hideMissingTaxes && tax.status === 'missing') {
+        return
       }
 
-      uniqueTaxes.forEach(tax => {
-        const diff = calculateTaxDifference(tax.bankValue, tax.customerValue)
-        if (diff !== null) {
-          total += diff
-          hasAny = true
-        }
-      })
+      const diff = normalizeNumericValue(tax.difference)
+      if (diff !== null) {
+        total += diff
+        hasAny = true
+      }
     })
 
     if (!hasAny) return null
 
     return total
-  }, [highMatches, getInlineTaxData, hideMissingTaxes])
+  }, [taxComparisonResults, hideMissingTaxes])
 
   // Keep the "Total différence" section in sync with the computed total
   useEffect(() => {
@@ -1987,10 +2029,17 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
 
     setTotalDifference(computedTotalTaxDifference)
 
-    const formattedTotal = computedTotalTaxDifference.toLocaleString('fr-FR', {
-      minimumFractionDigits: 3,
-      maximumFractionDigits: 3
-    })
+    // Format total difference with French grouping but dot as decimal separator.
+    // Example: "123 743.876"
+    const formattedTotal = computedTotalTaxDifference
+      .toLocaleString('fr-FR', {
+        minimumFractionDigits: 3,
+        maximumFractionDigits: 3,
+        useGrouping: true
+      })
+      .replace(/\u00A0/g, ' ')
+      .replace(',', '.')
+
     setTotalDifferenceInput(formattedTotal)
   }, [computedTotalTaxDifference])
 
@@ -2342,6 +2391,297 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     return customerToBankMap[customerTransactionId] || null
   }, [customerToBankMap])
 
+  // Calculate écart from comparison API for the clicked transaction
+  const computedEcart = useMemo(() => {
+    console.log('🔵 computedEcart useMemo called:', {
+      taxComparisonResultsLength: taxComparisonResults.length,
+      clickedTransactionIdsLength: clickedTransactionIds.length,
+      clickedTransactionIds,
+      taxComparisonResultsCount: taxComparisonResults.length
+    })
+    
+    if (!taxComparisonResults.length || clickedTransactionIds.length === 0) {
+      console.log('❌ Early return - no taxComparisonResults or no clickedTransactionIds')
+      return null
+    }
+
+    // Get the last clicked transaction (most recent)
+    const lastClickedId = clickedTransactionIds[clickedTransactionIds.length - 1]
+    
+    console.log('🔍 Computing écart for clicked transaction:', {
+      lastClickedId,
+      clickedTransactionIds,
+      taxComparisonResultsCount: taxComparisonResults.length
+    })
+
+    // Check if it's a tax row (customer tax transaction)
+    if (typeof lastClickedId === 'string' && lastClickedId.startsWith('tax-')) {
+      console.log('🔵 Processing tax row:', { lastClickedId })
+      // Extract customer transaction ID and tax index from tax row ID
+      const match = lastClickedId.match(/^tax-(\d+)-(\d+)$/)
+      if (match) {
+        const customerTxId = Number(match[1])
+        const taxIdx = Number(match[2])
+        console.log('🔵 Extracted IDs:', { customerTxId, taxIdx })
+        
+        const linkedBankId = getLinkedBankTransaction(customerTxId)
+        console.log('🔵 Linked bank ID:', { linkedBankId, customerTxId })
+        if (linkedBankId) {
+          // Get all customer taxes from taxComparisonResults (same source used for rendering)
+          const allCustomerTaxes = taxComparisonResults.filter(tax => 
+            tax.customer_transaction_id === customerTxId
+          )
+          
+          // Get matching bank taxes for comparison
+          const matchingBankTaxes = taxComparisonResults.filter(tax => 
+            tax.matched_bank_transaction_id === linkedBankId &&
+            tax.customer_transaction_id === customerTxId
+          )
+          
+          console.log('🔵 Customer taxes from taxComparisonResults:', {
+            linkedBankId,
+            customerTxId,
+            allCustomerTaxesCount: allCustomerTaxes.length,
+            matchingBankTaxesCount: matchingBankTaxes.length,
+            allCustomerTaxes: allCustomerTaxes.map((t: any, idx: number) => ({
+              idx,
+              tax_type: t.tax_type,
+              difference: t.difference,
+              customer_transaction_id: t.customer_transaction_id,
+              matched_bank_transaction_id: t.matched_bank_transaction_id
+            }))
+          })
+
+          // Get cached customer taxes to filter out duplicates (same logic as rendering)
+          const cachedCustTaxes = cachedCustomerTaxes[customerTxId] || []
+          const cachedTaxTypes = new Set(cachedCustTaxes.map(t => 
+            (t.tax_type || t.tax_name || t.label || '').toLowerCase()
+          ))
+          
+          // Filter customer taxes the same way as rendering (exclude cached ones to avoid duplicates)
+          const customerTaxes = allCustomerTaxes.filter(tax => {
+            const taxType = (tax.tax_type || '').toLowerCase()
+            return !cachedTaxTypes.has(taxType)
+          })
+          
+          console.log('🔵 Filtered customer taxes (after excluding cached):', {
+            customerTxId,
+            customerTaxesCount: customerTaxes.length,
+            taxIdx,
+            hasTaxAtIndex: !!customerTaxes[taxIdx],
+            customerTaxes: customerTaxes.map((t: any, idx: number) => ({
+              idx,
+              tax_type: t.tax_type,
+              difference: t.difference
+            }))
+          })
+          
+          if (customerTaxes[taxIdx]) {
+            const tax = customerTaxes[taxIdx]
+            const taxType = (tax.tax_type || '').toUpperCase()
+            console.log('🔵 Tax at index:', { taxIdx, taxType, tax })
+            
+            // Find the matching tax in matchingBankTaxes (should be the same one)
+            const matchingTax = matchingBankTaxes.find((t: any) => 
+              (t.tax_type || '').toUpperCase() === taxType
+            )
+            
+            console.log('🔵 Matching tax search:', {
+              taxType,
+              matchingTax: matchingTax ? {
+                id: matchingTax.id,
+                tax_type: matchingTax.tax_type,
+                difference: matchingTax.difference
+              } : null,
+              allTaxTypesInMatchingBankTaxes: matchingBankTaxes.map((t: any) => (t.tax_type || '').toUpperCase())
+            })
+
+            // Use the tax's own difference value (it's already in taxComparisonResults)
+            const differenceValue = tax.difference !== null && tax.difference !== undefined && tax.difference !== '' 
+              ? tax.difference 
+              : (matchingTax?.difference !== null && matchingTax?.difference !== undefined && matchingTax?.difference !== '' 
+                  ? matchingTax.difference 
+                  : null)
+
+            if (differenceValue !== null) {
+              const écart = normalizeNumericValue(differenceValue)
+              console.log('✅✅✅ Found écart for customer tax row:', {
+                customerTxId,
+                taxIdx,
+                taxType,
+                difference: differenceValue,
+                écart,
+                source: tax.difference !== null ? 'from tax' : 'from matchingTax'
+              })
+              return écart
+            } else {
+              console.log('⚠️⚠️⚠️ No difference value found for customer tax row:', {
+                customerTxId,
+                taxIdx,
+                taxType,
+                taxDifference: tax.difference,
+                matchingTaxDifference: matchingTax?.difference
+              })
+            }
+          } else {
+            console.log('⚠️⚠️⚠️ No tax at index:', { customerTxId, taxIdx, customerTaxesCount: customerTaxes.length })
+          }
+        } else {
+          console.log('⚠️⚠️⚠️ No linked bank ID found:', { customerTxId })
+        }
+      } else {
+        console.log('⚠️⚠️⚠️ Tax row ID match failed:', { lastClickedId })
+      }
+      console.log('❌❌❌ Returning null for tax row')
+      return null
+    }
+
+    // Check if it's a bank non-origine transaction
+    const clickedTxId = typeof lastClickedId === 'string' ? Number(lastClickedId) : lastClickedId
+    const clickedBankTx = filteredBankTransactions.find((tx: any) => tx.id === clickedTxId)
+    
+    if (clickedBankTx) {
+      const isOrigin = clickedBankTx.is_origine === true || clickedBankTx.is_origine === 'true' || clickedBankTx.is_origine === 1
+      const hasExplicitField = clickedBankTx.is_non_origine_in_group === true || clickedBankTx.is_non_origine_in_group === 'true' || clickedBankTx.is_non_origine_in_group === 1
+      const isNonOriginInGroup = hasExplicitField || 
+        (!isOrigin && clickedBankTx.internal_number && clickedBankTx.internal_number !== null && clickedBankTx.internal_number !== '' && clickedBankTx.group_size && clickedBankTx.group_size > 1)
+
+      console.log('🔍 Checking bank transaction:', {
+        clickedTxId,
+        isOrigin,
+        hasExplicitField,
+        isNonOriginInGroup,
+        type: clickedBankTx.type,
+        internal_number: clickedBankTx.internal_number,
+        ref: clickedBankTx.ref,
+        group_size: clickedBankTx.group_size
+      })
+
+      if (isNonOriginInGroup) {
+        // Find the origine transaction ID
+        let origineBankId: number | null = null
+        
+        if (clickedBankTx.internal_number && origineTransactionLookup.internalNumberMap.has(clickedBankTx.internal_number)) {
+          origineBankId = origineTransactionLookup.internalNumberMap.get(clickedBankTx.internal_number)!
+        } else if (clickedBankTx.ref && origineTransactionLookup.refMap.has(clickedBankTx.ref)) {
+          origineBankId = origineTransactionLookup.refMap.get(clickedBankTx.ref)!
+        }
+
+        console.log('🔍 Found origine transaction ID:', {
+          origineBankId,
+          taxType: (clickedBankTx.type || '').toUpperCase(),
+          internalNumberMapSize: origineTransactionLookup.internalNumberMap.size,
+          refMapSize: origineTransactionLookup.refMap.size
+        })
+
+        if (origineBankId !== null) {
+          // Get difference for this specific non-origine transaction
+          const taxType = (clickedBankTx.type || '').toUpperCase()
+          const matchingComparison = taxComparisonResults.find(tax => 
+            tax.matched_bank_transaction_id === origineBankId &&
+            (tax.tax_type || '').toUpperCase() === taxType
+          )
+
+          console.log('🔍 Matching comparison result:', {
+            matchingComparison: matchingComparison ? {
+              id: matchingComparison.id,
+              tax_type: matchingComparison.tax_type,
+              difference: matchingComparison.difference,
+              matched_bank_transaction_id: matchingComparison.matched_bank_transaction_id
+            } : null,
+            allComparisonsForOrigine: taxComparisonResults.filter(tax => tax.matched_bank_transaction_id === origineBankId).map(tax => ({
+              id: tax.id,
+              tax_type: tax.tax_type,
+              difference: tax.difference
+            }))
+          })
+
+          if (matchingComparison && matchingComparison.difference !== null && matchingComparison.difference !== undefined && matchingComparison.difference !== '') {
+            const écart = normalizeNumericValue(matchingComparison.difference)
+            console.log('✅ Found écart for bank non-origine transaction:', {
+              clickedTxId,
+              origineBankId,
+              taxType,
+              difference: matchingComparison.difference,
+              écart
+            })
+            return écart
+          } else {
+            console.log('⚠️ No matching comparison found for bank non-origine transaction:', {
+              clickedTxId,
+              origineBankId,
+              taxType,
+              availableTaxTypes: taxComparisonResults.filter(tax => tax.matched_bank_transaction_id === origineBankId).map(tax => tax.tax_type)
+            })
+          }
+        } else {
+          console.log('⚠️ Could not find origine transaction ID for:', {
+            clickedTxId,
+            internal_number: clickedBankTx.internal_number,
+            ref: clickedBankTx.ref
+          })
+        }
+      } else {
+        console.log('⚠️ Transaction is not a non-origine transaction:', {
+          clickedTxId,
+          isOrigin,
+          hasExplicitField
+        })
+      }
+    } else {
+      console.log('⚠️ Clicked transaction not found in filteredBankTransactions:', clickedTxId)
+    }
+
+    console.log('❌ No écart found for clicked transaction:', lastClickedId)
+    return null
+  }, [taxComparisonResults, filteredBankTransactions, filteredCustomerTransactions, cachedCustomerTaxes, origineTransactionLookup, getLinkedBankTransaction, clickedTransactionIds])
+
+  // Keep the "Écart" section in sync with the computed écart
+  useEffect(() => {
+    console.log('🔄🔄🔄 Écart useEffect triggered:', {
+      computedEcart,
+      type: typeof computedEcart,
+      isNull: computedEcart === null,
+      isUndefined: computedEcart === undefined
+    })
+    
+    if (computedEcart === null || computedEcart === undefined) {
+      console.log('❌❌❌ Écart is null/undefined, clearing input')
+      setEcart(null)
+      setEcartInput('')
+      return
+    }
+
+    setEcart(computedEcart)
+
+    // Format the écart value with proper sign and spacing.
+    // Example: "123 743.876"
+    const formattedEcart = computedEcart
+      .toLocaleString('fr-FR', {
+        minimumFractionDigits: 3,
+        maximumFractionDigits: 3,
+        useGrouping: true
+      })
+      .replace(/\u00A0/g, ' ')
+      .replace(',', '.')
+    
+    console.log('✅✅✅ Setting écart input:', {
+      computedEcart,
+      formattedEcart,
+      ecartInputWillBe: formattedEcart
+    })
+    
+    setEcartInput(formattedEcart)
+  }, [computedEcart])
+
+  // Determine écart color based on value
+  const ecartColor = useMemo(() => {
+    if (ecart === null || ecart === undefined) return 'text.secondary'
+    if (ecart === 0) return 'success.main' // Green for exactly zero
+    if (ecart > 0) return 'warning.main' // Orange for positive
+    return 'error.main' // Red for negative
+  }, [ecart])
+
   // Check if a bank transaction has linked customer transactions
   const hasLinkedCustomerTransactions = useCallback((bankTransactionId: number): boolean => {
     return !!bankToCustomerMap[bankTransactionId] && bankToCustomerMap[bankTransactionId].length > 0
@@ -2554,11 +2894,17 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     const bankTx = bankTransactions.find(tx => tx.id === bankTxId)
     if (bankTx) {
       setClickedTransactionIds(prev => {
+        console.log('🟢🟢🟢 Bank transaction clicked:', {
+          bankTxId,
+          prevIds: prev,
+          alreadyIncluded: prev.includes(bankTxId)
+        })
         // If already clicked, don't add again
         if (prev.includes(bankTxId)) {
           return prev
         }
         const newIds = [...prev, bankTxId]
+        console.log('✅✅✅ Adding bank transaction to clickedTransactionIds:', newIds)
         
         // Calculate cumulative solde: beginningBalance + sum of all transactions up to and including the clicked transaction
         // Find the position of the clicked transaction in the filtered/sorted list
@@ -2656,11 +3002,17 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     const customerTx = customerTransactions.find(tx => tx.id === customerTxId)
     if (customerTx) {
       setClickedTransactionIds(prev => {
+        console.log('🟢🟢🟢 Customer transaction clicked:', {
+          customerTxId,
+          prevIds: prev,
+          alreadyIncluded: prev.includes(customerTxId)
+        })
         // If already clicked, don't add again
         if (prev.includes(customerTxId)) {
           return prev
         }
         const newIds = [...prev, customerTxId]
+        console.log('✅✅✅ Adding customer transaction to clickedTransactionIds:', newIds)
         
         // Calculate solde: beginningBalance + sum of all clicked transaction amounts
         const txAmount = normalizeNumericValue(customerTx.amount) || 0
@@ -2912,6 +3264,133 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     window.print()
   }, [])
 
+  // Handle Assign Internal Number (shortcut)
+  const handleOpenAssignInternalNumberDialog = useCallback(() => {
+    if (!bankCode) {
+      alert('Bank code not available. Please wait for agency to load.')
+      return
+    }
+    if (selectedBankTransactions.size === 0) {
+      alert('Please select at least one bank transaction in the reconciliation table.')
+      return
+    }
+    setAssignInternalNumberValue('')
+    setAssignInternalNumberError(null)
+    setAssignInternalNumberOpen(true)
+  }, [bankCode, selectedBankTransactions])
+
+  const handleCloseAssignInternalNumberDialog = useCallback(() => {
+    if (assignInternalNumberLoading) return
+    setAssignInternalNumberOpen(false)
+    setAssignInternalNumberError(null)
+  }, [assignInternalNumberLoading])
+
+  const handleConfirmAssignInternalNumber = useCallback(async () => {
+    if (!bankCode) {
+      setAssignInternalNumberError('Bank code not available.')
+      return
+    }
+    const value = assignInternalNumberValue.trim()
+    if (!value) {
+      setAssignInternalNumberError('Please enter an internal number.')
+      return
+    }
+    if (selectedBankTransactions.size === 0) {
+      setAssignInternalNumberError('Please select at least one bank transaction.')
+      return
+    }
+
+    try {
+      setAssignInternalNumberLoading(true)
+      setAssignInternalNumberError(null)
+
+      const ids = Array.from(selectedBankTransactions)
+      console.log('🔁 Assigning internal number to bank transactions:', { bankCode, ids, internal_number: value })
+
+      await apiClient.post(`/api/${bankCode}/assign-internal-number/`, {
+        bank_transaction_ids: ids,
+        internal_number: value
+      })
+
+      alert(`Internal number "${value}" assigned to ${ids.length} bank transactions. Please refresh the data to see changes.`)
+      setAssignInternalNumberOpen(false)
+    } catch (err: any) {
+      console.error('❌ Failed to assign internal number:', err)
+      const msg =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to assign internal number'
+      setAssignInternalNumberError(msg)
+    } finally {
+      setAssignInternalNumberLoading(false)
+    }
+  }, [assignInternalNumberValue, bankCode, selectedBankTransactions])
+
+  // Handle manual match - link one bank transaction to one customer transaction
+  const handleManualMatch = useCallback(async () => {
+    if (!bankCode) {
+      alert('Bank code not available. Please wait for agency to load.')
+      return
+    }
+    
+    if (selectedBankTransactions.size !== 1) {
+      alert('Please select exactly one bank transaction in the reconciliation table.')
+      return
+    }
+    
+    if (selectedCustomerTransactions.size !== 1) {
+      alert('Please select exactly one customer transaction in the reconciliation table.')
+      return
+    }
+
+    const bankTxId = Array.from(selectedBankTransactions)[0]
+    const customerTxId = Array.from(selectedCustomerTransactions)[0]
+    
+    // Filter out tax row IDs (strings starting with "tax-")
+    if (typeof customerTxId === 'string' && customerTxId.startsWith('tax-')) {
+      alert('Please select a regular customer transaction, not a tax row.')
+      return
+    }
+
+    const confirmed = confirm(
+      `Link bank transaction ${bankTxId} to customer transaction ${customerTxId}? ` +
+      `This will also link all customer transactions with the same document number.`
+    )
+    
+    if (!confirmed) return
+
+    try {
+      console.log('🔗 Manual matching transactions:', { bankCode, bankTxId, customerTxId })
+
+      const response = await apiClient.post(`/api/${bankCode}/manual-match-customer-bank-transactions/`, {
+        reco_bank_transaction_id: bankTxId,
+        reco_customer_transaction_id: customerTxId
+      })
+
+      console.log('✅ Manual match successful:', response.data)
+      
+      alert(
+        `Successfully linked transactions!\n` +
+        `Bank Transaction: ${bankTxId}\n` +
+        `Customer Transaction: ${customerTxId}\n` +
+        `Propagated to ${response.data.propagated_to_same_document || 0} additional customer transactions with the same document number.\n\n` +
+        `Please refresh the data to see changes.`
+      )
+
+      // Clear selections after successful match
+      setSelectedBankTransactions(new Set())
+      setSelectedCustomerTransactions(new Set())
+    } catch (err: any) {
+      console.error('❌ Failed to manual match transactions:', err)
+      const errorMsg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to link transactions'
+      alert(`Error: ${errorMsg}`)
+    }
+  }, [bankCode, selectedBankTransactions, selectedCustomerTransactions])
+
   // Shortcuts for the shortcuts dropdown
   const shortcuts: ShortcutsType[] = useMemo(() => {
     const safeDict = dictionary?.navigation || {}
@@ -2919,6 +3398,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
       {
         icon: 'tabler-file-download',
         title: safeDict.exportXL || 'Export XL',
+        subtitle: '',
         onClick: handleExportToExcel
       },
       {
@@ -2926,45 +3406,65 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
         title: hideMissingTaxes 
           ? (safeDict.showMissingTaxes || 'Show Missing Taxes')
           : (safeDict.hideMissingTaxes || 'Hide Missing Taxes'),
+        subtitle: '',
         onClick: handleToggleHideMissingTaxes
+      },
+      {
+        icon: 'tabler-hash',
+        title: safeDict.assignInternalNumber || 'Assign Internal Number',
+        subtitle: '',
+        onClick: handleOpenAssignInternalNumberDialog
+      },
+      {
+        icon: 'tabler-link',
+        title: safeDict.manualMatch || 'Manual Match',
+        subtitle: '',
+        onClick: handleManualMatch
       },
       {
         icon: 'tabler-calculator',
         title: safeDict.calculator || 'Calculator',
+        subtitle: '',
         onClick: () => setCalculatorOpen(true)
       },
       {
         icon: 'tabler-printer',
         title: safeDict.printReport || 'Print Report',
+        subtitle: '',
         onClick: handlePrintReport
       },
       {
         url: '/apps/invoice/list',
         icon: 'tabler-file-dollar',
-        title: safeDict.invoiceApp || 'Invoice App'
+        title: safeDict.invoiceApp || 'Invoice App',
+        subtitle: ''
       },
       {
         url: '/apps/user/list',
         icon: 'tabler-user',
-        title: safeDict.users || 'Users'
+        title: safeDict.users || 'Users',
+        subtitle: ''
       },
       {
         url: '/apps/roles',
         icon: 'tabler-users-group',
-        title: safeDict.roleManagement || 'Role Management'
+        title: safeDict.roleManagement || 'Role Management',
+        subtitle: ''
       },
       {
         url: '/',
         icon: 'tabler-device-desktop-analytics',
-        title: safeDict.dashboard || 'Dashboard'
+        title: safeDict.dashboard || 'Dashboard',
+        subtitle: ''
       },
       {
         url: '/shared/pages/account-settings',
         icon: 'tabler-settings',
-        title: safeDict.settings || 'Settings'
+        title: safeDict.settings || 'Settings',
+        subtitle: ''
       }
     ]
-  }, [handleExportToExcel, dictionary, hideMissingTaxes, handleToggleHideMissingTaxes, handlePrintReport])
+  }, [handleExportToExcel, dictionary, hideMissingTaxes, handleToggleHideMissingTaxes, handleOpenAssignInternalNumberDialog, handlePrintReport, handleManualMatch])
 
   // Play notification sound
   const playNotificationSound = useCallback(() => {
@@ -3441,8 +3941,54 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
       const enrichedHigh = await parallelize(baseHighMatches)
 
       setMatchingSummary(result.summary)
+      // Hide missing taxes by default when matching completes
+      setHideMissingTaxes(true)
       // Sort by bank operation date (ascending)
       setHighMatches(sortMatchesByBankOperationDate(enrichedHigh))
+      
+      // Fetch sum of matched bank transactions
+      try {
+        if (agency?.bank) {
+          const bankCode = String(agency.bank)
+          if (bankCode) {
+            console.log('📊 Fetching sum of matched bank transactions...')
+            const sumResult = await recoBankTransactionService.getSumMatchedTransactions(bankCode)
+            setMatchedSum(sumResult)
+
+            // Put the matched sum directly into the ending balance box.
+            // Format with French locale (spaces as thousands separator, dot as decimal)
+            try {
+              const rawDecimal =
+                typeof sumResult.total_sum_decimal === 'number'
+                  ? sumResult.total_sum_decimal
+                  : Number(sumResult.total_sum)
+
+              if (!Number.isNaN(rawDecimal)) {
+                setEndingBalance(rawDecimal)
+
+                // Format with French locale (spaces as thousands separator), then use dot as decimal separator.
+                // Example: "-136 956.369"
+                const formatted = rawDecimal
+                  .toLocaleString('fr-FR', {
+                    minimumFractionDigits: 3,
+                    maximumFractionDigits: 3,
+                    useGrouping: true
+                  })
+                  .replace(',', '.')
+
+                setEndingBalanceInput(formatted)
+              }
+            } catch (formatErr) {
+              console.error('❌ Error formatting matched sum for ending balance input:', formatErr)
+            }
+
+            console.log('✅ Matched bank transactions sum:', sumResult)
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error fetching matched bank transactions sum:', err)
+        setMatchedSum(null)
+      }
       
       // Auto-extract customer taxes and cache them
       try {
@@ -3600,6 +4146,25 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
         console.log('🔄 Auto-running tax comparison...')
         setTaxComparisonLoading(true)
         const taxComparisonResult = await taxComparisonService.compareTaxes(bankCode)
+        
+        // DEBUG: Log raw API response to see actual structure
+        console.log('🔍 RAW Tax Comparison API Response:', {
+          message: taxComparisonResult.message,
+          resultsCount: taxComparisonResult.results?.length || 0,
+          sampleResults: taxComparisonResult.results?.slice(0, 10).map((r: any) => ({
+            id: r.id,
+            customer_transaction_id: r.customer_transaction_id,
+            matched_bank_transaction_id: r.matched_bank_transaction_id,
+            tax_type: r.tax_type,
+            customer_tax: r.customer_tax,
+            customer_total_tax: r.customer_total_tax,
+            bank_tax: r.bank_tax,
+            status: r.status,
+            allKeys: Object.keys(r),
+            fullObject: r
+          }))
+        })
+        
         setTaxComparisonResults(taxComparisonResult.results || [])
         console.log('✅ Tax comparison completed:', taxComparisonResult.message)
         console.log('📊 Tax comparison results:', taxComparisonResult.results?.length || 0, 'comparisons')
@@ -4228,7 +4793,14 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     Money,
     LocalAtm,
     Wallet,
-    Savings
+    Savings,
+    Warning,
+    ReportProblem,
+    ErrorOutline,
+    RemoveCircleOutline,
+    SwapCalls,
+    Compare,
+    IndeterminateCheckBox
   }
 
   // Icon component renderer
@@ -4803,7 +5375,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                 }}
                                 sx={{ 
                                   height: '32px',
-                                  cursor: isLinked ? 'pointer' : 'default',
+                                  cursor: (isLinked || isNonOriginInGroup) ? 'pointer' : 'default',
                                   backgroundColor: isHighlighted ? '#e8f5e9' : '#ffffff',
                                   borderLeft: isLinked ? '3px solid #4caf50' : 'none',
                                   color: textColor,
@@ -4962,6 +5534,239 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                   </TableRow>
                                 )
                               })}
+                              {/* Tax difference rows - show when transaction is clicked and has matched customer transaction OR is non-origine */}
+                              {clickedTransactionIds.includes(tx.id) && ((isLinked && linkedCustomers.length > 0) || isNonOriginInGroup) && (() => {
+                                // For non-origine transactions, get difference from comparison API
+                                if (isNonOriginInGroup && (!isLinked || linkedCustomers.length === 0)) {
+                                  // Find the origine transaction ID
+                                  let origineBankId: number | null = null
+                                  
+                                  if (tx.internal_number && origineTransactionLookup.internalNumberMap.has(tx.internal_number)) {
+                                    origineBankId = origineTransactionLookup.internalNumberMap.get(tx.internal_number)!
+                                  } else if (tx.ref && origineTransactionLookup.refMap.has(tx.ref)) {
+                                    origineBankId = origineTransactionLookup.refMap.get(tx.ref)!
+                                  }
+                                  
+                                  // Get difference from comparison API for this specific non-origine transaction
+                                  // Match by origine transaction ID and tax type
+                                  if (origineBankId !== null) {
+                                    const taxType = (tx.type || '').toUpperCase()
+                                    const matchingComparison = taxComparisonResults.find(tax => 
+                                      tax.matched_bank_transaction_id === origineBankId &&
+                                      (tax.tax_type || '').toUpperCase() === taxType
+                                    )
+                                    
+                                    if (matchingComparison && matchingComparison.difference !== null && matchingComparison.difference !== undefined && matchingComparison.difference !== '') {
+                                      const écart = normalizeNumericValue(matchingComparison.difference)
+                                      
+                                      if (écart !== null) {
+                                        const formattedEcart = Math.abs(écart).toLocaleString('fr-FR', {
+                                          minimumFractionDigits: 3,
+                                          maximumFractionDigits: 3
+                                        }).replace(',', '.')
+                                        const ecartLabel = écart > 0 
+                                          ? `+${formattedEcart}` 
+                                          : `-${formattedEcart}`
+                                        
+                                        return (
+                                          <TableRow
+                                            key={`ecart-non-origine-${tx.id}`}
+                                            sx={{
+                                              height: '32px',
+                                              maxHeight: '32px',
+                                              color: '#2e7d32',
+                                              backgroundColor: '#f9f9f9',
+                                              '& td': {
+                                                padding: '4px 8px',
+                                                fontSize: '0.75rem',
+                                                height: '32px',
+                                                maxHeight: '32px',
+                                                lineHeight: '1.2',
+                                                whiteSpace: 'nowrap'
+                                              },
+                                              '& td:first-of-type': {
+                                                borderLeft: '1px solid #ccc',
+                                                padding: '4px 8px'
+                                              },
+                                            }}
+                                          >
+                                            {/* Removed per-tax Écart display row under customer tax row.
+                                                The global Écart section next to Total Difference is now the single source of truth. */}
+                                          </TableRow>
+                                        )
+                                      }
+                                    }
+                                  }
+                                  return null
+                                }
+                                
+                                // Get tax data for the first linked customer (or combine all if one-to-many)
+                                const firstCustomerId = linkedCustomers[0]
+                                const { bankRows, customerRows } = getTaxComparisonForPair(tx.id, firstCustomerId)
+                                
+                                // Combine and deduplicate taxes by name
+                                const allTaxes = new Map<string, { name: string; bankValue: string; customerValue: string; status: string | null }>()
+                                
+                                bankRows.forEach(tax => {
+                                  const key = tax.name.toLowerCase()
+                                  if (!allTaxes.has(key)) {
+                                    allTaxes.set(key, {
+                                      name: tax.name,
+                                      bankValue: tax.formattedValue as string,
+                                      customerValue: '-',
+                                      status: tax.status
+                                    })
+                                  } else {
+                                    const existing = allTaxes.get(key)!
+                                    existing.bankValue = tax.formattedValue as string
+                                    if (tax.status && !existing.status) {
+                                      existing.status = tax.status
+                                    }
+                                  }
+                                })
+                                
+                                customerRows.forEach(tax => {
+                                  const key = tax.name.toLowerCase()
+                                  if (!allTaxes.has(key)) {
+                                    allTaxes.set(key, {
+                                      name: tax.name,
+                                      bankValue: '-',
+                                      customerValue: tax.formattedValue as string,
+                                      status: tax.status
+                                    })
+                                  } else {
+                                    const existing = allTaxes.get(key)!
+                                    existing.customerValue = tax.formattedValue as string
+                                    if (tax.status && !existing.status) {
+                                      existing.status = tax.status
+                                    }
+                                  }
+                                })
+                                
+                                const uniqueTaxes = Array.from(allTaxes.values())
+                                
+                                if (uniqueTaxes.length === 0) return null
+                                
+                                // Calculate combined écart
+                                let totalDifference = 0
+                                let hasAnyDifference = false
+                                
+                                uniqueTaxes.forEach(tax => {
+                                  const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                                  if (difference !== null) {
+                                    totalDifference += difference
+                                    hasAnyDifference = true
+                                  }
+                                })
+                                
+                                // Format difference display
+                                let diffDisplay: ReactNode = <Typography variant="caption" color="text.secondary">-</Typography>
+                                if (hasAnyDifference) {
+                                  const formattedDiff = totalDifference.toLocaleString('fr-FR', {
+                                    minimumFractionDigits: 3,
+                                    maximumFractionDigits: 3
+                                  }).replace(',', '.')
+                                  const diffLabel = totalDifference > 0 
+                                    ? `+${formattedDiff}` 
+                                    : formattedDiff
+                                  diffDisplay = (
+                                    <Typography 
+                                      variant="body2" 
+                                      sx={{ 
+                                        fontWeight: 500,
+                                        color: totalDifference === 0 ? 'success.main' : 
+                                               Math.abs(totalDifference) > 0.001 ? 'error.main' : 'text.primary',
+                                        lineHeight: '1.2',
+                                        fontSize: '0.75rem',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      {dictionary?.navigation?.taxDifference || 'Écart'}: {diffLabel}
+                                    </Typography>
+                                  )
+                                }
+                                
+                                // Format bank taxes
+                                const bankTaxesElements = uniqueTaxes.map((tax, taxIdx) => {
+                                  const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                                  let taxColor = 'text.primary'
+                                  if (difference !== null && Math.abs(difference) < 0.001) {
+                                    taxColor = 'success.main'
+                                  } else if (difference !== null) {
+                                    taxColor = 'error.main'
+                                  }
+                                  
+                                  return (
+                                    <Box key={`bank-tax-${taxIdx}`} component="span" sx={{ color: taxColor, padding: '0 16px' }}>
+                                      {`${tax.name}:${formatHighMatchAmount(tax.bankValue)}`}
+                                    </Box>
+                                  )
+                                })
+                                
+                                // Format customer taxes
+                                const customerTaxesElements = uniqueTaxes.map((tax, taxIdx) => {
+                                  const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                                  let taxColor = 'text.primary'
+                                  if (difference !== null && Math.abs(difference) < 0.001) {
+                                    taxColor = 'success.main'
+                                  } else if (difference !== null) {
+                                    taxColor = 'error.main'
+                                  }
+                                  
+                                  return (
+                                    <Box key={`customer-tax-${taxIdx}`} component="span" sx={{ color: taxColor, padding: '0 16px' }}>
+                                      {`${tax.name}:${formatHighMatchAmount(tax.customerValue)}`}
+                                    </Box>
+                                  )
+                                })
+                                
+                                return (
+                                  <TableRow
+                                    key={`tax-diff-${tx.id}`}
+                                    sx={{
+                                      height: '32px',
+                                      maxHeight: '32px',
+                                      color: '#2e7d32',
+                                      backgroundColor: '#f9f9f9',
+                                      '& td': {
+                                        padding: '4px 8px',
+                                        fontSize: '0.75rem',
+                                        height: '32px',
+                                        maxHeight: '32px',
+                                        lineHeight: '1.2',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                      },
+                                      '& td:first-of-type': {
+                                        borderLeft: '1px solid #ccc',
+                                        padding: '4px 8px'
+                                      },
+                                    }}
+                                  >
+                                    <TableCell sx={{ borderLeft: '1px solid #ccc', padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                                    <TableCell colSpan={2} sx={{ fontWeight: 400, fontStyle: 'italic', padding: '4px 8px', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    </TableCell>
+                                    <TableCell colSpan={3} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                                    <TableCell align="left" sx={{ fontWeight: 400, padding: '4px 8px 4px 0', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                      <Box sx={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 4, margin: 0, padding: 0 }}>
+                                        {bankTaxesElements}
+                                      </Box>
+                                    </TableCell>
+                                    <TableCell colSpan={6} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px', borderRight: '1px solid #ccc' }} />
+                                    <TableCell colSpan={2} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                                    <TableCell align="left" sx={{ fontWeight: 400, padding: '4px 8px 4px 0', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                      <Box sx={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 4, margin: 0, padding: 0 }}>
+                                        {customerTaxesElements}
+                                      </Box>
+                                    </TableCell>
+                                    <TableCell colSpan={6} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                                    <TableCell align="right" sx={{ fontWeight: 400, padding: '4px 8px', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap' }}>
+                                      {diffDisplay}
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })()}
                             </Fragment>
                           )
                         })}
@@ -5230,7 +6035,33 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                           const isFirstInGroup = groupIndex === 0
                           const isLastInGroup = groupIndex === groupedCustomers.length - 1
                           
+                          // Check if this customer transaction is origine
+                          // Customer transactions might have type field or is_origine field, or be linked to an origine bank transaction
+                          // Check both matched and unmatched bank transactions
+                          // Also check if it's in unmatchedCustomerTransactions with origine status
+                          const linkedBankTx = linkedBank ? (
+                            filteredBankTransactions.find((btx: any) => btx.id === Number(linkedBank)) ||
+                            unmatchedBankTransactions.find((btx: any) => btx.id === Number(linkedBank))
+                          ) : null
+                          // Check if this customer transaction is in unmatched list and is origine
+                          const isUnmatchedOrigine = unmatchedCustomerTransactions.some((utx: any) => 
+                            utx.id === tx.id && (
+                              utx.type === 'origine' || 
+                              utx.is_origine === true || 
+                              utx.is_origine === 'true' || 
+                              utx.is_origine === 1
+                            )
+                          )
+                          
+                          const isCustomerOrigine = tx.type === 'origine' || 
+                            tx.is_origine === true || 
+                            tx.is_origine === 'true' || 
+                            tx.is_origine === 1 ||
+                            isUnmatchedOrigine ||
+                            (linkedBankTx && linkedBankTx.type === 'origine')
+                          
                           return (
+                            <Fragment key={tx.id}>
                           <TableRow 
                             key={tx.id}
                             ref={(el) => { customerTransactionRefs.current[tx.id] = el }}
@@ -5318,6 +6149,174 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                               <TableCell sx={{ padding: '4px 8px', fontSize: '0.75rem' }}>{tx.document_number || ''}</TableCell>
                             )}
                         </TableRow>
+                        {/* Tax difference rows - show when transaction is clicked and has matched bank transaction */}
+                        {clickedTransactionIds.includes(tx.id) && isLinked && linkedBank && (() => {
+                          const { bankRows, customerRows } = getTaxComparisonForPair(Number(linkedBank), tx.id)
+                          
+                          // Combine and deduplicate taxes by name
+                          const allTaxes = new Map<string, { name: string; bankValue: string; customerValue: string; status: string | null }>()
+                          
+                          bankRows.forEach(tax => {
+                            const key = tax.name.toLowerCase()
+                            if (!allTaxes.has(key)) {
+                              allTaxes.set(key, {
+                                name: tax.name,
+                                bankValue: tax.formattedValue as string,
+                                customerValue: '-',
+                                status: tax.status
+                              })
+                            } else {
+                              const existing = allTaxes.get(key)!
+                              existing.bankValue = tax.formattedValue as string
+                              if (tax.status && !existing.status) {
+                                existing.status = tax.status
+                              }
+                            }
+                          })
+                          
+                          customerRows.forEach(tax => {
+                            const key = tax.name.toLowerCase()
+                            if (!allTaxes.has(key)) {
+                              allTaxes.set(key, {
+                                name: tax.name,
+                                bankValue: '-',
+                                customerValue: tax.formattedValue as string,
+                                status: tax.status
+                              })
+                            } else {
+                              const existing = allTaxes.get(key)!
+                              existing.customerValue = tax.formattedValue as string
+                              if (tax.status && !existing.status) {
+                                existing.status = tax.status
+                              }
+                            }
+                          })
+                          
+                          const uniqueTaxes = Array.from(allTaxes.values())
+                          
+                          if (uniqueTaxes.length === 0) return null
+                          
+                          // Calculate combined écart
+                          let totalDifference = 0
+                          let hasAnyDifference = false
+                          
+                          uniqueTaxes.forEach(tax => {
+                            const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                            if (difference !== null) {
+                              totalDifference += difference
+                              hasAnyDifference = true
+                            }
+                          })
+                          
+                          // Format difference display
+                          let diffDisplay: ReactNode = <Typography variant="caption" color="text.secondary">-</Typography>
+                          if (hasAnyDifference) {
+                            const formattedDiff = totalDifference.toLocaleString('fr-FR', {
+                              minimumFractionDigits: 3,
+                              maximumFractionDigits: 3
+                            }).replace(',', '.')
+                            const diffLabel = totalDifference > 0 
+                              ? `+${formattedDiff}` 
+                              : formattedDiff
+                            diffDisplay = (
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontWeight: 500,
+                                  color: totalDifference === 0 ? 'success.main' : 
+                                         Math.abs(totalDifference) > 0.001 ? 'error.main' : 'text.primary',
+                                  lineHeight: '1.2',
+                                  fontSize: '0.75rem',
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                {dictionary?.navigation?.taxDifference || 'Écart'}: {diffLabel}
+                              </Typography>
+                            )
+                          }
+                          
+                          // Format bank taxes
+                          const bankTaxesElements = uniqueTaxes.map((tax, taxIdx) => {
+                            const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                            let taxColor = 'text.primary'
+                            if (difference !== null && Math.abs(difference) < 0.001) {
+                              taxColor = 'success.main'
+                            } else if (difference !== null) {
+                              taxColor = 'error.main'
+                            }
+                            
+                            return (
+                              <Box key={`bank-tax-${taxIdx}`} component="span" sx={{ color: taxColor, padding: '0 16px' }}>
+                                {`${tax.name}:${formatHighMatchAmount(tax.bankValue)}`}
+                              </Box>
+                            )
+                          })
+                          
+                          // Format customer taxes
+                          const customerTaxesElements = uniqueTaxes.map((tax, taxIdx) => {
+                            const difference = calculateTaxDifference(tax.bankValue, tax.customerValue)
+                            let taxColor = 'text.primary'
+                            if (difference !== null && Math.abs(difference) < 0.001) {
+                              taxColor = 'success.main'
+                            } else if (difference !== null) {
+                              taxColor = 'error.main'
+                            }
+                            
+                            return (
+                              <Box key={`customer-tax-${taxIdx}`} component="span" sx={{ color: taxColor, padding: '0 16px' }}>
+                                {`${tax.name}:${formatHighMatchAmount(tax.customerValue)}`}
+                              </Box>
+                            )
+                          })
+                          
+                          return (
+                            <TableRow
+                              key={`tax-diff-${tx.id}`}
+                              sx={{
+                                height: '32px',
+                                maxHeight: '32px',
+                                color: '#2e7d32',
+                                backgroundColor: '#f9f9f9',
+                                '& td': {
+                                  padding: '4px 8px',
+                                  fontSize: '0.75rem',
+                                  height: '32px',
+                                  maxHeight: '32px',
+                                  lineHeight: '1.2',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
+                                },
+                                '& td:first-of-type': {
+                                  borderLeft: '1px solid #ccc',
+                                  padding: '4px 8px'
+                                },
+                              }}
+                            >
+                              <TableCell sx={{ borderLeft: '1px solid #ccc', padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                              <TableCell colSpan={2} sx={{ fontWeight: 400, fontStyle: 'italic', padding: '4px 8px', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              </TableCell>
+                              <TableCell colSpan={3} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                              <TableCell align="left" sx={{ fontWeight: 400, padding: '4px 8px 4px 0', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 4, margin: 0, padding: 0 }}>
+                                  {bankTaxesElements}
+                                </Box>
+                              </TableCell>
+                              <TableCell colSpan={6} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px', borderRight: '1px solid #ccc' }} />
+                              <TableCell colSpan={2} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                              <TableCell align="left" sx={{ fontWeight: 400, padding: '4px 8px 4px 0', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 4, margin: 0, padding: 0 }}>
+                                  {customerTaxesElements}
+                                </Box>
+                              </TableCell>
+                              <TableCell colSpan={6} sx={{ padding: '4px 8px', height: '32px', maxHeight: '32px' }} />
+                              <TableCell align="right" sx={{ fontWeight: 400, padding: '4px 8px', fontSize: '0.75rem', height: '32px', maxHeight: '32px', lineHeight: '1.2', whiteSpace: 'nowrap' }}>
+                                {diffDisplay}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })()}
+                            </Fragment>
                           )
                         })}
                     </TableBody>
@@ -5332,141 +6331,193 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
 
       {/* Balance Sections */}
       <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mt={7} mb={3} sx={{ width: '100%', flexShrink: 0 }}>
-        {/* Solde Section - Display cumulative balance when transaction is clicked */}
-        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-          {renderIcon(selectedIcons.balance, 'warning')}
-          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-            {dictionary?.navigation?.balance || 'Solde'}:
-          </Typography>
-          {currentSolde !== null ? (
-            <Typography
-              variant="body1"
-              color="warning.main"
-              fontWeight={600}
-              sx={{ mt: 0.25 }}
-            >
-              {currentSolde.toLocaleString('fr-FR', {
-                minimumFractionDigits: 3,
-                maximumFractionDigits: 3,
-                useGrouping: true
-              })}
+        {/* Left group: Solde + Écart */}
+        <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+          {/* Solde Section - Display cumulative balance when transaction is clicked */}
+          <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+            {renderIcon(selectedIcons.balance, 'warning')}
+            <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+              {dictionary?.navigation?.balance || 'Solde'}:
             </Typography>
-          ) : (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ mt: 0.25, fontStyle: 'italic' }}
-            >
-              {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+            {currentSolde !== null ? (
+              <Typography
+                variant="body1"
+                color="warning.main"
+                fontWeight={600}
+                sx={{ mt: 0.25 }}
+              >
+                {currentSolde
+                  .toLocaleString('fr-FR', {
+                    minimumFractionDigits: 3,
+                    maximumFractionDigits: 3,
+                    useGrouping: true
+                  })
+                  .replace(/\u00A0/g, ' ')
+                  .replace(',', '.')}
+              </Typography>
+            ) : (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.25, fontStyle: 'italic' }}
+              >
+                {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+              </Typography>
+            )}
+          </Box>
+
+          {/* Écart Section */}
+          <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+            <Box sx={{ color: ecartColor }}>
+              {renderIcon(selectedIcons.ecart, 'inherit')}
+            </Box>
+            <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+              {dictionary?.navigation?.ecart || 'Écart'}:
             </Typography>
-          )}
+            <TextField
+              size="small"
+              type="text"
+              value={ecartInput}
+              InputProps={{ readOnly: true }}
+              placeholder="0.000"
+              sx={{ 
+                maxWidth: 180, 
+                mt: 0.25,
+                '& .MuiInputBase-root': {
+                  height: '32px',
+                  minHeight: '32px'
+                },
+                '& .MuiInputBase-input': {
+                  padding: '6px 8px',
+                  height: '32px',
+                  boxSizing: 'border-box',
+                  color: ecartColor
+                }
+              }}
+            />
+          </Box>
         </Box>
-        
-        {/* Total Difference Section */}
-        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-          {renderIcon(selectedIcons.totalDifference, 'error')}
-          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-            {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
-          </Typography>
-          <TextField
-            size="small"
-            type="text"
-            value={totalDifferenceInput}
-            InputProps={{ readOnly: true }}
-            placeholder="0.000"
-            sx={{ 
-              maxWidth: 180, 
-              mt: 0.25,
-              '& .MuiInputBase-root': {
-                height: '32px',
-                minHeight: '32px'
-              },
-              '& .MuiInputBase-input': {
-                padding: '6px 8px',
-                height: '32px',
-                boxSizing: 'border-box'
-              }
-            }}
-          />
-        </Box>
-        
-        {/* Ending Balance Section */}
-        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
-          {(() => {
-            // Check if endingBalance equals or differs from statementEndingBalance
-            const bothSet = endingBalance !== null && statementEndingBalance !== null
-            const isEqual = bothSet && Math.abs(endingBalance - statementEndingBalance) <= 0.001
-            const isDifferent = bothSet && Math.abs(endingBalance - statementEndingBalance) > 0.001
-            const iconColor = isEqual ? 'success' : isDifferent ? 'error' : 'secondary'
-            return renderIcon(selectedIcons.endingBalance, iconColor)
-          })()}
-          <Typography 
-            variant="body2" 
-            fontWeight={500} 
-            sx={{ 
-              fontSize: '0.857rem',
-              color: (() => {
-                const bothSet = endingBalance !== null && statementEndingBalance !== null
-                const isEqual = bothSet && Math.abs(endingBalance - statementEndingBalance) <= 0.001
-                const isDifferent = bothSet && Math.abs(endingBalance - statementEndingBalance) > 0.001
-                if (isEqual) return 'success.main'
-                if (isDifferent) return 'error.main'
-                return 'text.primary'
-              })()
-            }}
-          >
-            {dictionary?.navigation?.endingBalance || 'Ending balance of ledger entry'}:
-          </Typography>
-          <TextField
-            size="small"
-            type="number"
-            value={endingBalanceInput}
-            onChange={e => {
-              setEndingBalanceInput(e.target.value)
-              setEndingBalanceInputError('')
-            }}
-            onBlur={() => {
-              if (!endingBalanceInput.trim()) {
-                setEndingBalance(null)
-                return
-              }
 
-              const parsed = Number(endingBalanceInput.replace(',', '.'))
+        {/* Right group: [ Total Difference | Ending Balance ] */}
+        <Box display="flex" alignItems="center" gap={3} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
+          {/* Total Difference Section */}
+          <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+            {renderIcon(selectedIcons.totalDifference, 'error')}
+            <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+              {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
+            </Typography>
+            <TextField
+              size="small"
+              type="text"
+              value={totalDifferenceInput}
+              InputProps={{ readOnly: true }}
+              placeholder="0.000"
+              sx={{ 
+                maxWidth: 180, 
+                mt: 0.25,
+                '& .MuiInputBase-root': {
+                  height: '32px',
+                  minHeight: '32px'
+                },
+                '& .MuiInputBase-input': {
+                  padding: '6px 8px',
+                  height: '32px',
+                  boxSizing: 'border-box'
+                }
+              }}
+            />
+          </Box>
 
-              if (Number.isNaN(parsed)) {
-                setEndingBalanceInputError(
-                  dictionary?.navigation?.invalidBeginningBalance || 'Please enter a valid number'
-                )
-                return
-              }
-
-              setEndingBalance(parsed)
-            }}
-            placeholder="0.000"
-            error={!!endingBalanceInputError}
-            helperText={endingBalanceInputError || ''}
-            sx={{ 
-              maxWidth: 180, 
-              mt: 0.25,
-              '& .MuiInputBase-root': {
-                height: '32px',
-                minHeight: '32px'
-              },
-              '& .MuiInputBase-input': {
-                padding: '6px 8px',
-                height: '32px',
-                boxSizing: 'border-box',
+          {/* Ending Balance Section */}
+          <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+            {(() => {
+              // Check if endingBalance equals or differs from statementEndingBalance
+              const bothSet = endingBalance !== null && statementEndingBalance !== null
+              const isEqual = bothSet && Math.abs(endingBalance - statementEndingBalance) <= 0.001
+              const isDifferent = bothSet && Math.abs(endingBalance - statementEndingBalance) > 0.001
+              const iconColor = isEqual ? 'success' : isDifferent ? 'error' : 'secondary'
+              return renderIcon(selectedIcons.endingBalance, iconColor)
+            })()}
+            <Typography 
+              variant="body2" 
+              fontWeight={500} 
+              sx={{ 
+                fontSize: '0.857rem',
                 color: (() => {
                   const bothSet = endingBalance !== null && statementEndingBalance !== null
                   const isEqual = bothSet && Math.abs(endingBalance - statementEndingBalance) <= 0.001
                   const isDifferent = bothSet && Math.abs(endingBalance - statementEndingBalance) > 0.001
                   if (isEqual) return 'success.main'
                   if (isDifferent) return 'error.main'
-                  return undefined
+                  return 'text.primary'
                 })()
-              }
-            }}
-          />
+              }}
+            >
+              {dictionary?.navigation?.endingBalance || 'Ending balance of ledger entry'}:
+            </Typography>
+            <TextField
+              size="small"
+              type="text"
+              value={endingBalanceInput}
+              onChange={e => {
+                setEndingBalanceInput(e.target.value)
+                setEndingBalanceInputError('')
+              }}
+              onBlur={() => {
+                if (!endingBalanceInput.trim()) {
+                  setEndingBalance(null)
+                  return
+                }
+
+                // Remove spaces (thousands separators) and replace comma with dot for parsing
+                const cleaned = endingBalanceInput.replace(/\s/g, '').replace(',', '.')
+                const parsed = Number(cleaned)
+
+                if (Number.isNaN(parsed)) {
+                  setEndingBalanceInputError(
+                    dictionary?.navigation?.invalidBeginningBalance || 'Please enter a valid number'
+                  )
+                  return
+                }
+
+                setEndingBalance(parsed)
+                
+              // Format the input with spaces after parsing, and dot as decimal separator
+              const formatted = parsed
+                .toLocaleString('fr-FR', {
+                  minimumFractionDigits: 3,
+                  maximumFractionDigits: 3,
+                  useGrouping: true
+                })
+                .replace(',', '.')
+              setEndingBalanceInput(formatted)
+              }}
+              placeholder="0.000"
+              error={!!endingBalanceInputError}
+              helperText={endingBalanceInputError || ''}
+              sx={{ 
+                maxWidth: 180, 
+                mt: 0.25,
+                '& .MuiInputBase-root': {
+                  height: '32px',
+                  minHeight: '32px'
+                },
+                '& .MuiInputBase-input': {
+                  padding: '6px 8px',
+                  height: '32px',
+                  boxSizing: 'border-box',
+                  color: (() => {
+                    const bothSet = endingBalance !== null && statementEndingBalance !== null
+                    const isEqual = bothSet && Math.abs(endingBalance - statementEndingBalance) <= 0.001
+                    const isDifferent = bothSet && Math.abs(endingBalance - statementEndingBalance) > 0.001
+                    if (isEqual) return 'success.main'
+                    if (isDifferent) return 'error.main'
+                    return undefined
+                  })()
+                }
+              }}
+            />
+          </Box>
         </Box>
       </Box>
 
@@ -5561,7 +6612,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                   </IconButton>
                 </Box>
               </Box>
-              {isHighMatchesFullscreen ? (
+              {isHighMatchesFullscreen && (
                 <Dialog
                   open={isHighMatchesFullscreen}
                   onClose={() => setIsHighMatchesFullscreen(false)}
@@ -6291,66 +7342,105 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                     </Box>
                     {/* Balance Sections */}
                     <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mt={3} mb={2} sx={{ width: '100%', flexShrink: 0 }}>
-                      {/* Solde Section - Display cumulative balance when transaction is clicked */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                        {renderIcon(selectedIcons.balance, 'warning')}
-                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                          {dictionary?.navigation?.balance || 'Solde'}:
-                        </Typography>
-                        {currentSolde !== null ? (
-                          <Typography
-                            variant="body1"
-                            color="warning.main"
-                            fontWeight={600}
-                            sx={{ mt: 0.25 }}
-                          >
-                            {currentSolde.toLocaleString('fr-FR', {
-                              minimumFractionDigits: 3,
-                              maximumFractionDigits: 3,
-                              useGrouping: true
-                            })}
+                      {/* Left group: Solde + Écart */}
+                      <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                        {/* Solde Section - Display cumulative balance when transaction is clicked */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          {renderIcon(selectedIcons.balance, 'warning')}
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.balance || 'Solde'}:
                           </Typography>
-                        ) : (
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ mt: 0.25, fontStyle: 'italic' }}
-                          >
-                            {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                          {currentSolde !== null ? (
+                            <Typography
+                              variant="body1"
+                              color="warning.main"
+                              fontWeight={600}
+                              sx={{ mt: 0.25 }}
+                            >
+                              {currentSolde
+                                .toLocaleString('fr-FR', {
+                                  minimumFractionDigits: 3,
+                                  maximumFractionDigits: 3,
+                                  useGrouping: true
+                                })
+                                .replace(/\u00A0/g, ' ')
+                                .replace(',', '.')}
+                            </Typography>
+                          ) : (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ mt: 0.25, fontStyle: 'italic' }}
+                            >
+                              {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                            </Typography>
+                          )}
+                        </Box>
+                        
+                        {/* Écart Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          <Box sx={{ color: ecartColor }}>
+                            {renderIcon(selectedIcons.ecart, 'inherit')}
+                          </Box>
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.ecart || 'Écart'}:
                           </Typography>
-                        )}
+                          <TextField
+                            size="small"
+                            type="text"
+                            value={ecartInput}
+                            InputProps={{ readOnly: true }}
+                            placeholder="0.000"
+                            sx={{ 
+                              maxWidth: 180, 
+                              mt: 0.25,
+                              '& .MuiInputBase-root': {
+                                height: '32px',
+                                minHeight: '32px'
+                              },
+                              '& .MuiInputBase-input': {
+                                padding: '6px 8px',
+                                height: '32px',
+                                boxSizing: 'border-box',
+                                color: ecartColor
+                              }
+                            }}
+                          />
+                        </Box>
                       </Box>
                       
-                      {/* Total Difference Section */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                        {renderIcon(selectedIcons.totalDifference, 'error')}
-                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                          {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
-                        </Typography>
-                        <TextField
-                          size="small"
-                          type="text"
-                          value={totalDifferenceInput}
-                          InputProps={{ readOnly: true }}
-                          placeholder="0.000"
-                          sx={{ 
-                            maxWidth: 180, 
-                            mt: 0.25,
-                            '& .MuiInputBase-root': {
-                              height: '32px',
-                              minHeight: '32px'
-                            },
-                            '& .MuiInputBase-input': {
-                              padding: '6px 8px',
-                              height: '32px',
-                              boxSizing: 'border-box'
-                            }
-                          }}
-                        />
-                      </Box>
-                      
-                      {/* Ending Balance Section */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
+                      {/* Right group: Total difference + Solde final */}
+                      <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                        {/* Total Difference Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          {renderIcon(selectedIcons.totalDifference, 'error')}
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
+                          </Typography>
+                          <TextField
+                            size="small"
+                            type="text"
+                            value={totalDifferenceInput}
+                            InputProps={{ readOnly: true }}
+                            placeholder="0.000"
+                            sx={{ 
+                              maxWidth: 180, 
+                              mt: 0.25,
+                              '& .MuiInputBase-root': {
+                                height: '32px',
+                                minHeight: '32px'
+                              },
+                              '& .MuiInputBase-input': {
+                                padding: '6px 8px',
+                                height: '32px',
+                                boxSizing: 'border-box'
+                              }
+                            }}
+                          />
+                        </Box>
+                        
+                        {/* Ending Balance Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
                         {(() => {
                           // Check if endingBalance equals or differs from statementEndingBalance
                           const bothSet = endingBalance !== null && statementEndingBalance !== null
@@ -6378,7 +7468,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                         </Typography>
                         <TextField
                           size="small"
-                          type="number"
+                          type="text"
                           value={endingBalanceInput}
                           onChange={e => {
                             setEndingBalanceInput(e.target.value)
@@ -6390,7 +7480,9 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                               return
                             }
 
-                            const parsed = Number(endingBalanceInput.replace(',', '.'))
+                            // Remove spaces (thousands separators) and replace comma with dot for parsing
+                            const cleaned = endingBalanceInput.replace(/\s/g, '').replace(',', '.')
+                            const parsed = Number(cleaned)
 
                             if (Number.isNaN(parsed)) {
                               setEndingBalanceInputError(
@@ -6400,6 +7492,16 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                             }
 
                             setEndingBalance(parsed)
+                            
+                            // Format the input with spaces after parsing, and dot as decimal separator
+                            const formatted = parsed
+                              .toLocaleString('fr-FR', {
+                                minimumFractionDigits: 3,
+                                maximumFractionDigits: 3,
+                                useGrouping: true
+                              })
+                              .replace(',', '.')
+                            setEndingBalanceInput(formatted)
                           }}
                           placeholder="0.000"
                           error={!!endingBalanceInputError}
@@ -6428,12 +7530,12 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                         />
                       </Box>
                     </Box>
+                    </Box>
                   </DialogContent>
                 </Dialog>
-              ) : null}
-              
+              )}
               {!isHighMatchesFullscreen && (
-              <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 600, overflowX: 'auto', mb: 4, border: '1px solid #ccc' }}>
+                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 600, overflowX: 'auto', mb: 4, border: '1px solid #ccc' }}>
                 <Table size="small" stickyHeader sx={{ 
                   '& .MuiTableCell-root': { borderColor: '#ccc' },
                   '& .MuiTableCell-root:nth-of-type(10)': { borderRight: 'none !important' },
@@ -6962,86 +8064,122 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
               {/* Balance Sections */}
               {!isHighMatchesFullscreen && (
               <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mt={3} mb={2} sx={{ width: '100%' }}>
-                {/* Balance Section */}
-                <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                  {renderIcon(selectedIcons.balance, 'warning')}
-                  <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                    {dictionary?.navigation?.balance || 'Balance of ledger entry'}:
-                  </Typography>
-                  <TextField
-                    size="small"
-                    type="number"
-                    value={balanceInput}
-                    onChange={e => {
-                      setBalanceInput(e.target.value)
-                      setBalanceInputError('')
-                    }}
-                    onBlur={() => {
-                      if (!balanceInput.trim()) {
-                        setBalance(null)
-                        return
-                      }
+                {/* Left group: Balance + Écart */}
+                <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                  {/* Balance Section */}
+                  <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                    {renderIcon(selectedIcons.balance, 'warning')}
+                    <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                      {dictionary?.navigation?.balance || 'Balance of ledger entry'}:
+                    </Typography>
+                    <TextField
+                      size="small"
+                      type="number"
+                      value={balanceInput}
+                      onChange={e => {
+                        setBalanceInput(e.target.value)
+                        setBalanceInputError('')
+                      }}
+                      onBlur={() => {
+                        if (!balanceInput.trim()) {
+                          setBalance(null)
+                          return
+                        }
 
-                      const parsed = Number(balanceInput.replace(',', '.'))
+                        const parsed = Number(balanceInput.replace(',', '.'))
 
-                      if (Number.isNaN(parsed)) {
-                        setBalanceInputError(
-                          dictionary?.navigation?.invalidBeginningBalance || 'Please enter a valid number'
-                        )
-                        return
-                      }
+                        if (Number.isNaN(parsed)) {
+                          setBalanceInputError(
+                            dictionary?.navigation?.invalidBeginningBalance || 'Please enter a valid number'
+                          )
+                          return
+                        }
 
-                      setBalance(parsed)
-                    }}
-                    placeholder="0.000"
-                    error={!!balanceInputError}
-                    helperText={balanceInputError || ''}
-                    sx={{ 
-                      maxWidth: 180, 
-                      mt: 0.25,
-                      '& .MuiInputBase-root': {
-                        height: '32px',
-                        minHeight: '32px'
-                      },
-                      '& .MuiInputBase-input': {
-                        padding: '6px 8px',
-                        height: '32px',
-                        boxSizing: 'border-box'
-                      }
-                    }}
-                  />
+                        setBalance(parsed)
+                      }}
+                      placeholder="0.000"
+                      error={!!balanceInputError}
+                      helperText={balanceInputError || ''}
+                      sx={{ 
+                        maxWidth: 180, 
+                        mt: 0.25,
+                        '& .MuiInputBase-root': {
+                          height: '32px',
+                          minHeight: '32px'
+                        },
+                        '& .MuiInputBase-input': {
+                          padding: '6px 8px',
+                          height: '32px',
+                          boxSizing: 'border-box'
+                        }
+                      }}
+                    />
+                  </Box>
+                  
+                  {/* Écart Section */}
+                  <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                    <Box sx={{ color: ecartColor }}>
+                      {renderIcon(selectedIcons.ecart, 'inherit')}
+                    </Box>
+                    <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                      {dictionary?.navigation?.ecart || 'Écart'}:
+                    </Typography>
+                    <TextField
+                      size="small"
+                      type="text"
+                      value={ecartInput}
+                      InputProps={{ readOnly: true }}
+                      placeholder="0.000"
+                      sx={{ 
+                        maxWidth: 180, 
+                        mt: 0.25,
+                        '& .MuiInputBase-root': {
+                          height: '32px',
+                          minHeight: '32px'
+                        },
+                        '& .MuiInputBase-input': {
+                          padding: '6px 8px',
+                          height: '32px',
+                          boxSizing: 'border-box',
+                          color: ecartColor
+                        }
+                      }}
+                    />
+                  </Box>
                 </Box>
                 
-                {/* Total Difference Section */}
-                <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                  {renderIcon(selectedIcons.totalDifference, 'error')}
-                  <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                    {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
-                  </Typography>
-                  <TextField
-                    size="small"
-                    type="text"
-                    value={totalDifferenceInput}
-                    InputProps={{ readOnly: true }}
-                    placeholder="0.000"
-                    sx={{ 
-                      maxWidth: 180, 
-                      mt: 0.25,
-                      '& .MuiInputBase-root': {
-                        height: '32px',
-                        minHeight: '32px'
-                      },
-                      '& .MuiInputBase-input': {
-                        padding: '6px 8px',
-                        height: '32px',
-                        boxSizing: 'border-box'
-                      }
-                    }}
-                  />
-                </Box>
-                
-                {/* Ending Balance Section */}
-                <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
+                {/* Right group: Total difference + Solde final */}
+                <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                  {/* Total Difference Section */}
+                  <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                    {renderIcon(selectedIcons.totalDifference, 'error')}
+                    <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                      {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
+                    </Typography>
+                    <TextField
+                      size="small"
+                      type="text"
+                      value={totalDifferenceInput}
+                      InputProps={{ readOnly: true }}
+                      placeholder="0.000"
+                      sx={{ 
+                        maxWidth: 180, 
+                        mt: 0.25,
+                        '& .MuiInputBase-root': {
+                          height: '32px',
+                          minHeight: '32px'
+                        },
+                        '& .MuiInputBase-input': {
+                          padding: '6px 8px',
+                          height: '32px',
+                          boxSizing: 'border-box'
+                        }
+                      }}
+                    />
+                  </Box>
+                  
+                  {/* Ending Balance Section */}
+                  <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
                   {(() => {
                     // Check if endingBalance equals or differs from statementEndingBalance
                     const bothSet = endingBalance !== null && statementEndingBalance !== null
@@ -7069,7 +8207,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                   </Typography>
                   <TextField
                     size="small"
-                    type="number"
+                    type="text"
                     value={endingBalanceInput}
                     onChange={e => {
                       setEndingBalanceInput(e.target.value)
@@ -7081,7 +8219,9 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                         return
                       }
 
-                      const parsed = Number(endingBalanceInput.replace(',', '.'))
+                      // Remove spaces (thousands separators) and replace comma with dot for parsing
+                      const cleaned = endingBalanceInput.replace(/\s/g, '').replace(',', '.')
+                      const parsed = Number(cleaned)
 
                       if (Number.isNaN(parsed)) {
                         setEndingBalanceInputError(
@@ -7091,6 +8231,16 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                       }
 
                       setEndingBalance(parsed)
+                      
+                      // Format the input with spaces after parsing, and dot as decimal separator
+                      const formatted = parsed
+                        .toLocaleString('fr-FR', {
+                          minimumFractionDigits: 3,
+                          maximumFractionDigits: 3,
+                          useGrouping: true
+                        })
+                        .replace(',', '.')
+                      setEndingBalanceInput(formatted)
                     }}
                     placeholder="0.000"
                     error={!!endingBalanceInputError}
@@ -7117,6 +8267,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                       }
                     }}
                   />
+                  </Box>
                 </Box>
               </Box>
               )}
@@ -7717,30 +8868,15 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                 // For non-origine transactions, use pre-computed lookup maps from sorted API
                                 let bankTransactionIdForComparison: number = tx.id
                                 
-                                // Logging for troubleshooting circle icon colors
+                                // Use pre-computed lookup maps from sorted API data to resolve origine transaction
                                 if (!isOrigin) {
-                                  console.log(`🔍 [Circle Icon Debug] Non-origine transaction ${tx.id}:`, {
-                                    label: tx.label,
-                                    type: tx.type,
-                                    internal_number: tx.internal_number,
-                                    ref: tx.ref,
-                                    is_origine: tx.is_origine,
-                                    hasInternalNumberInMap: tx.internal_number ? origineTransactionLookup.internalNumberMap.has(tx.internal_number) : false,
-                                    hasRefInMap: tx.ref ? origineTransactionLookup.refMap.has(tx.ref) : false
-                                  })
-                                  
-                                  // Use pre-computed lookup maps from sorted API data
                                   // Try internal_number first (for REMISE EFFET transactions)
                                   if (tx.internal_number && origineTransactionLookup.internalNumberMap.has(tx.internal_number)) {
                                     bankTransactionIdForComparison = origineTransactionLookup.internalNumberMap.get(tx.internal_number)!
-                                    console.log(`  ✅ Found origine by internal_number: ${tx.internal_number} → ${bankTransactionIdForComparison}`)
                                   }
                                   // If not found by internal_number, try ref (for PAYEMENT EFFET transactions)
                                   else if (tx.ref && origineTransactionLookup.refMap.has(tx.ref)) {
                                     bankTransactionIdForComparison = origineTransactionLookup.refMap.get(tx.ref)!
-                                    console.log(`  ✅ Found origine by ref: ${tx.ref} → ${bankTransactionIdForComparison}`)
-                                  } else {
-                                    console.log(`  ⚠️ No origine found for transaction ${tx.id}, using tx.id: ${bankTransactionIdForComparison}`)
                                   }
                                 }
                                 
@@ -7750,37 +8886,9 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                   tax.matched_bank_transaction_id === bankTransactionIdForComparison
                                 )
                                 
-                                // Logging for comparison results
-                                if (!isOrigin && matchingCustomerTaxes.length > 0) {
-                                  console.log(`  📊 Comparison results for bank_transaction_id ${bankTransactionIdForComparison}:`, {
-                                    count: matchingCustomerTaxes.length,
-                                    taxes: matchingCustomerTaxes.map(t => ({
-                                      tax_type: t.tax_type,
-                                      status: t.status,
-                                      statusType: typeof t.status,
-                                      bank_tax: t.bank_tax,
-                                      customer_tax: t.customer_tax
-                                    }))
-                                  })
-                                  // Log raw status values for debugging
-                                  console.log(`  🔍 Raw status values:`, matchingCustomerTaxes.map(t => ({
-                                    tax_type: t.tax_type,
-                                    status: t.status,
-                                    statusStrict: t.status === 'match',
-                                    statusStrictMatched: t.status === 'matched'
-                                  })))
-                                } else if (!isOrigin && matchingCustomerTaxes.length === 0) {
-                                  // Check if the origine transaction is matched to any customer transaction
-                                  const isOrigineMatched = bankToCustomerMap[bankTransactionIdForComparison] && bankToCustomerMap[bankTransactionIdForComparison].length > 0
-                                  const matchedCustomers = bankToCustomerMap[bankTransactionIdForComparison] || []
-                                  console.log(`  ⚠️ No comparison results found for bank_transaction_id ${bankTransactionIdForComparison}`, {
-                                    isOrigineMatched,
-                                    matchedCustomerIds: matchedCustomers,
-                                    possibleReasons: isOrigineMatched 
-                                      ? 'Origine is matched but tax comparison not run yet or no taxes to compare' 
-                                      : 'Origine transaction not matched to any customer transaction (not in high matches)',
-                                    note: 'Tax comparison results only exist for matched transactions after tax comparison API is run'
-                                  })
+                                // When there are no comparison results, simply fall back to original circle logic
+                                if (!isOrigin && matchingCustomerTaxes.length === 0) {
+                                  // (no verbose logging)
                                 }
                                 
                                 // Determine circle emoji for non-origine transactions based on comparison API status
@@ -7803,35 +8911,22 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       // Normalize status: API might return 'matched' but we check for 'match'
                                       const status = specificTaxComparison.status === 'matched' ? 'match' : specificTaxComparison.status
                                       
-                                      console.log(`  🎨 Circle emoji decision for tx ${tx.id} (tax_type: ${txTaxType}):`, {
-                                        taxType: txTaxType,
-                                        comparisonStatus: specificTaxComparison.status,
-                                        normalizedStatus: status,
-                                        bank_tax: specificTaxComparison.bank_tax,
-                                        customer_tax: specificTaxComparison.customer_tax
-                                      })
-                                      
                                       if (status === 'match') {
                                         circleEmoji = '🟢' // Green - this specific tax matches
                                         circleTooltip = `Non-origine: ${txTaxType} tax matched`
-                                        console.log(`  ✅ Result: 🟢 Green (${txTaxType} tax matches)`)
                                       } else if (status === 'mismatch') {
                                         circleEmoji = '🟡' // Yellow - this specific tax mismatches
                                         circleTooltip = `Non-origine: ${txTaxType} tax mismatches`
-                                        console.log(`  ⚠️ Result: 🟡 Yellow (${txTaxType} tax mismatches)`)
                                       } else if (status === 'missing') {
                                         circleEmoji = '🔴' // Red - this specific tax is missing
                                         circleTooltip = `Non-origine: ${txTaxType} tax missing`
-                                        console.log(`  ❌ Result: 🔴 Red (${txTaxType} tax missing)`)
                                       } else {
                                         // Unknown status, default to yellow
                                         circleEmoji = '🟡'
                                         circleTooltip = `Non-origine: ${txTaxType} tax status unknown`
-                                        console.log(`  ⚠️ Result: 🟡 Yellow (${txTaxType} tax status: ${status})`)
                                       }
                                     } else {
                                       // This specific tax type not found in comparison results
-                                      console.log(`  ⚠️ Tax type ${txTaxType} not found in comparison results for tx ${tx.id}`)
                                       // Fall through to fallback logic
                                     }
                                   }
@@ -7839,24 +8934,15 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                   // Fallback to original logic if no comparison results or tax type not found
                                   if (!circleEmoji) {
                                     // Fallback to original logic if no comparison results
-                                    console.log(`  ⚠️ No comparison results or tax type not found, using fallback logic for tx ${tx.id}:`, {
-                                      shouldBeColored,
-                                      isNonOriginInGroup,
-                                      txTaxType,
-                                      hasComparisonResults: matchingCustomerTaxes.length > 0
-                                    })
                                     if (shouldBeColored) {
                                       circleEmoji = '🟢' // Green - origine matched
                                       circleTooltip = 'Non-origine: Origine matched'
-                                      console.log(`  ✅ Fallback result: 🟢 Green (shouldBeColored=true)`)
                                     } else if (isNonOriginInGroup) {
                                       circleEmoji = '🟡' // Yellow - origine not matched yet
                                       circleTooltip = 'Non-origine: Origine not matched yet'
-                                      console.log(`  ⚠️ Fallback result: 🟡 Yellow (isNonOriginInGroup=true)`)
                                     } else {
                                       circleEmoji = '🔴' // Red - unmatched or no group
                                       circleTooltip = 'Non-origine: Unmatched or no group'
-                                      console.log(`  ❌ Fallback result: 🔴 Red (no group)`)
                                     }
                                   }
                                 }
@@ -7890,7 +8976,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                     height: '32px',
                                     minHeight: '32px',
                                     maxHeight: '32px',
-                                    cursor: isLinked ? 'pointer' : 'default',
+                                    cursor: (isLinked || isNonOriginInGroup) ? 'pointer' : 'default',
                                     backgroundColor: isHighlighted ? '#e8f5e9' : '#ffffff',
                                     borderLeft: isLinked ? '3px solid #4caf50' : 'none',
                                     color: textColor,
@@ -7898,6 +8984,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                     boxShadow: isHighlightedFromCustomer ? '0 2px 8px rgba(76, 175, 80, 0.4)' : 'none',
                                     position: 'relative',
                                     animation: isHighlightedFromCustomer ? `${pulseBlueAnimation} 1.5s ease-in-out infinite` : 'none',
+                                    fontWeight: tx.type === 'origine' ? 600 : 'normal',
                                     '& .MuiTableCell-root': {
                                       padding: '4px 8px',
                                       fontSize: '0.75rem',
@@ -7910,8 +8997,10 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       overflow: 'hidden',
                                       textOverflow: 'ellipsis',
                                       height: '32px',
+                                      fontWeight: tx.type === 'origine' ? 600 : 'inherit',
                                       '& *': {
-                                        color: `${textColor} !important`
+                                        color: `${textColor} !important`,
+                                        fontWeight: tx.type === 'origine' ? 600 : 'inherit'
                                       }
                                     },
                                     '&:hover': {
@@ -8475,29 +9564,34 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                   // Skip if tax type is in cache (to avoid duplicates)
                                   return !cachedTaxTypes.has(taxType)
                                 })
-                                
-                                // Debug logging for customerTaxes array - show FULL structure
-                                if (customerTaxes.length > 0) {
-                                  console.log('🔍 Customer Taxes Array Debug:', {
-                                    transactionId: tx.id,
-                                    allCustomerTaxesCount: allCustomerTaxes.length,
-                                    cachedCustTaxesCount: cachedCustTaxes.length,
-                                    customerTaxesCount: customerTaxes.length,
-                                    firstTaxSample: customerTaxes[0],
-                                    firstTaxSampleKeys: Object.keys(customerTaxes[0] || {}),
-                                    allTaxSamples: customerTaxes.map(t => ({
-                                      tax_type: t.tax_type,
-                                      customer_tax: t.customer_tax,
-                                      customer_total_tax: t.customer_total_tax,
-                                      tax_amount: t.tax_amount,
-                                      value: t.value,
-                                      has_customer_tax: t.customer_tax !== null && t.customer_tax !== undefined && t.customer_tax !== '',
-                                      has_customer_total_tax: t.customer_total_tax !== null && t.customer_total_tax !== undefined && t.customer_total_tax !== '',
-                                      // Show ALL fields to identify correct structure
-                                      allFields: t
-                                    }))
-                                  })
-                                }
+
+                                // ---------- ORIGINE DETECTION FOR CUSTOMER TX (SIDE-BY-SIDE VIEW) ----------
+                                // Check if this customer transaction is origine
+                                // 1) Direct flags on the customer transaction (type / is_origine)
+                                // 2) Origine information on the linked bank transaction (matched or unmatched)
+                                // 3) Fallback: if there are NO customerTaxes for this tx, treat it as origine (final row, not a tax row)
+
+                                // 1) Direct flags on customer transaction
+                                const hasTypeOrigine = tx.type === 'origine'
+                                const hasIsOrigine = tx.is_origine === true || tx.is_origine === 'true' || tx.is_origine === 1
+
+                                // 2) Linked bank transaction (matched or unmatched)
+                                const linkedBankTx = linkedBank ? (
+                                  filteredBankTransactions.find((btx: any) => btx.id === Number(linkedBank)) ||
+                                  unmatchedBankTransactions.find((btx: any) => btx.id === Number(linkedBank))
+                                ) : null
+                                const linkedToOrigineBank = !!(linkedBankTx && linkedBankTx.type === 'origine')
+
+                                // 3) Fallback: no customerTaxes → treat as origine
+                                const hasNoCustomerTaxes = customerTaxes.length === 0
+
+                                const isCustomerOrigine =
+                                  hasTypeOrigine ||
+                                  hasIsOrigine ||
+                                  linkedToOrigineBank ||
+                                  hasNoCustomerTaxes
+
+                                // (removed verbose debug logging for customerTaxes array)
                                 
                                 // Determine circle emoji for customer transactions linked to bank non-origine transactions
                                 // The circle icon represents the bank non-origine transaction's respective customer tax status
@@ -8566,6 +9660,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                     boxShadow: isHighlightedFromBank ? '0 2px 8px rgba(76, 175, 80, 0.4)' : 'none',
                                     position: 'relative',
                                     animation: isHighlightedFromBank ? `${pulseGreenAnimation} 1.5s ease-in-out infinite` : 'none',
+                                    fontWeight: isCustomerOrigine ? 600 : 'normal',
                                     '& .MuiTableCell-root': {
                                       padding: '4px 8px',
                                       fontSize: '0.75rem',
@@ -8578,8 +9673,10 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       overflow: 'hidden',
                                       textOverflow: 'ellipsis',
                                       height: '32px',
+                                      fontWeight: isCustomerOrigine ? 600 : 'inherit',
                                       '& *': {
-                                        color: isLinked ? '#4caf50 !important' : 'inherit'
+                                        color: isLinked ? '#4caf50 !important' : 'inherit',
+                                        fontWeight: isCustomerOrigine ? 600 : 'inherit'
                                       }
                                     },
                                     '&:hover': {
@@ -8669,31 +9766,11 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                               {/* Customer Tax Rows */}
                               {customerTaxes.map((tax: any, taxIdx: number) => {
                                 const taxType = tax.tax_type || 'Tax'
-                                // amount column uses customer_tax, total_amount column uses customer_total_tax
-                                const customerTaxAmount = tax.customer_tax
-                                const customerTotalTaxAmount = tax.customer_total_tax
-                                
-                                // Debug logging - show FULL raw tax object to see all available fields
-                                console.log('🔍 Customer Tax Row Debug:', {
-                                  taxType,
-                                  transactionId: tx.id,
-                                  taxIdx,
-                                  rawTax: tax,
-                                  allTaxKeys: Object.keys(tax),
-                                  customerTaxAmount,
-                                  customerTotalTaxAmount,
-                                  hasCustomerTax: customerTaxAmount !== null && customerTaxAmount !== undefined && customerTaxAmount !== '',
-                                  hasCustomerTotalTax: customerTotalTaxAmount !== null && customerTotalTaxAmount !== undefined && customerTotalTaxAmount !== '',
-                                  // Show all tax fields to identify the correct ones
-                                  taxFields: {
-                                    customer_tax: tax.customer_tax,
-                                    customer_total_tax: tax.customer_total_tax,
-                                    tax_amount: tax.tax_amount,
-                                    value: tax.value,
-                                    customerTax: tax.customerTax,
-                                    customerTotalTax: tax.customerTotalTax
-                                  }
-                                })
+                                // amount column uses customer_tax (individual amount), total_amount column uses customer_total_tax (total from API)
+                                // IMPORTANT: Read values directly from tax object - do not modify
+                                // Use bracket notation to avoid any getter/setter issues
+                                const customerTaxAmount = tax['customer_tax'] || tax.customer_tax
+                                const customerTotalTaxAmount = tax['customer_total_tax'] || tax.customer_total_tax
                                 
                                 // At least one value must exist (0 is a valid value, so check for null/undefined/empty string)
                                 if ((customerTaxAmount === null || customerTaxAmount === undefined || customerTaxAmount === '') &&
@@ -8706,32 +9783,22 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                 const formatNegativeValue = (value: any, fieldName: string): number | null => {
                                   // 0 is a valid value, so only check for null/undefined/empty string
                                   if (value === null || value === undefined || value === '') {
-                                    console.log(`  - ${fieldName}: null/undefined/empty, returning null`)
                                     return null
                                   }
                                   const num = typeof value === 'string' 
                                     ? parseFloat(value.replace(/\s/g, '').replace(',', '.')) 
                                     : Number(value)
                                   if (isNaN(num)) {
-                                    console.warn(`  - ${fieldName}: invalid number (${value}), returning null`)
                                     return null
                                   }
                                   const negativeValue = -Math.abs(num)
-                                  console.log(`  - ${fieldName}: ${value} -> ${negativeValue}`)
                                   return negativeValue
                                 }
                                 
                                 const amountValue = formatNegativeValue(customerTaxAmount, 'customer_tax (amount)')
                                 const totalAmountValue = formatNegativeValue(customerTotalTaxAmount, 'customer_total_tax (total_amount)')
                                 
-                                console.log('✅ Final values:', {
-                                  taxType,
-                                  amountValue,
-                                  totalAmountValue,
-                                  amountDisplay: amountValue !== null ? formatTaxValue(amountValue) : '-',
-                                  totalAmountDisplay: totalAmountValue !== null ? formatTaxValue(totalAmountValue) : '-'
-                                })
-                                
+                                                                
                                 // Check if this tax has a matching bank tax
                                 const matchingTax = matchingBankTaxes.find((t: any) => 
                                   (t.tax_type || '').toLowerCase() === (taxType || '').toLowerCase()
@@ -8768,14 +9835,38 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                 const taxRowBgColor = isHighlighted ? '#e8f5e9' : '#ffffff'
                                 
                                 return (
+                                  <Fragment key={`customer-tax-${tx.id}-${taxIdx}`}>
                                   <TableRow
                                     key={`customer-tax-${tx.id}-${taxIdx}`}
                                     hover
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      // Track clicked tax row - toggle on/off
+                                      setClickedTransactionIds(prev => {
+                                        const taxRowId = `tax-${tx.id}-${taxIdx}`
+                                        console.log('🟢🟢🟢 Tax row clicked:', {
+                                          taxRowId,
+                                          customerTxId: tx.id,
+                                          taxIdx,
+                                          prevIds: prev,
+                                          alreadyIncluded: prev.includes(taxRowId)
+                                        })
+                                        if (!prev.includes(taxRowId)) {
+                                          const newIds = [...prev, taxRowId]
+                                          console.log('✅✅✅ Adding tax row to clickedTransactionIds:', newIds)
+                                          return newIds
+                                        }
+                                        const filteredIds = prev.filter(id => id !== taxRowId)
+                                        console.log('🔄 Removing tax row from clickedTransactionIds:', filteredIds)
+                                        return filteredIds
+                                      })
+                                    }}
                                     sx={{
                                       height: '28px',
                                       backgroundColor: taxRowBgColor,
                                       borderLeft: hasMatchingBankTax ? '3px solid #4caf50' : 'none',
                                       color: isLinked ? '#4caf50' : 'inherit',
+                                      cursor: 'pointer',
                                       '& .MuiTableCell-root': {
                                         padding: '4px 8px',
                                         fontSize: '0.75rem',
@@ -8819,7 +9910,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                               {taxCircleEmoji}
                                             </span>
                                           )}
-                                          <span>💰 {taxType}</span>
+                                          <span>{taxType}</span>
                                         </Box>
                                       </TableCell>
                                     )}
@@ -8851,6 +9942,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       <TableCell></TableCell>
                                     )}
                                   </TableRow>
+                                  </Fragment>
                                 )
                               }).filter(Boolean)}
                               </Fragment>
@@ -8866,66 +9958,102 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                   </Grid>
                   {/* Balance Sections */}
                   <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mt={3} mb={2} sx={{ width: '100%', flexShrink: 0 }}>
-                    {/* Solde Section - Display cumulative balance when transaction is clicked */}
-                    <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                      {renderIcon(selectedIcons.balance, 'warning')}
-                      <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                        {dictionary?.navigation?.balance || 'Solde'}:
-                      </Typography>
-                      {currentSolde !== null ? (
-                        <Typography
-                          variant="body1"
-                          color="warning.main"
-                          fontWeight={600}
-                          sx={{ mt: 0.25 }}
-                        >
-                          {currentSolde.toLocaleString('fr-FR', {
-                            minimumFractionDigits: 3,
-                            maximumFractionDigits: 3,
-                            useGrouping: true
-                          })}
+                    {/* Left group: Solde + Écart */}
+                    <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                      {/* Solde Section - Display cumulative balance when transaction is clicked */}
+                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                        {renderIcon(selectedIcons.balance, 'warning')}
+                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                          {dictionary?.navigation?.balance || 'Solde'}:
                         </Typography>
-                      ) : (
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          sx={{ mt: 0.25, fontStyle: 'italic' }}
-                        >
-                          {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                        {currentSolde !== null ? (
+                          <Typography
+                            variant="body1"
+                            color="warning.main"
+                            fontWeight={600}
+                            sx={{ mt: 0.25 }}
+                          >
+                            {currentSolde.toLocaleString('fr-FR', {
+                              minimumFractionDigits: 3,
+                              maximumFractionDigits: 3,
+                              useGrouping: true
+                            })}
+                          </Typography>
+                        ) : (
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ mt: 0.25, fontStyle: 'italic' }}
+                          >
+                            {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                          </Typography>
+                        )}
+                      </Box>
+                      
+                      {/* Écart Section */}
+                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                        <Box sx={{ color: ecartColor }}>
+                          {renderIcon(selectedIcons.ecart, 'inherit')}
+                        </Box>
+                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                          {dictionary?.navigation?.ecart || 'Écart'}:
                         </Typography>
-                      )}
+                        <TextField
+                          size="small"
+                          type="text"
+                          value={ecartInput}
+                          InputProps={{ readOnly: true }}
+                          placeholder="0.000"
+                          sx={{ 
+                            maxWidth: 180, 
+                            mt: 0.25,
+                            '& .MuiInputBase-root': {
+                              height: '32px',
+                              minHeight: '32px'
+                            },
+                            '& .MuiInputBase-input': {
+                              padding: '6px 8px',
+                              height: '32px',
+                              boxSizing: 'border-box',
+                              color: ecartColor
+                            }
+                          }}
+                        />
+                      </Box>
                     </Box>
                     
-                    {/* Total Difference Section */}
-                    <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                      {renderIcon(selectedIcons.totalDifference, 'error')}
-                      <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                        {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
-                      </Typography>
-                      <TextField
-                        size="small"
-                        type="text"
-                        value={totalDifferenceInput}
-                        InputProps={{ readOnly: true }}
-                        placeholder="0.000"
-                        sx={{ 
-                          maxWidth: 180, 
-                          mt: 0.25,
-                          '& .MuiInputBase-root': {
-                            height: '32px',
-                            minHeight: '32px'
-                          },
-                          '& .MuiInputBase-input': {
-                            padding: '6px 8px',
-                            height: '32px',
-                            boxSizing: 'border-box'
-                          }
-                        }}
-                      />
-                    </Box>
-                    
-                    {/* Ending Balance Section */}
-                    <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
+                    {/* Right group: Total difference + Solde final */}
+                    <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                      {/* Total Difference Section */}
+                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                        {renderIcon(selectedIcons.totalDifference, 'error')}
+                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                          {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
+                        </Typography>
+                        <TextField
+                          size="small"
+                          type="text"
+                          value={totalDifferenceInput}
+                          InputProps={{ readOnly: true }}
+                          placeholder="0.000"
+                          sx={{ 
+                            maxWidth: 180, 
+                            mt: 0.25,
+                            '& .MuiInputBase-root': {
+                              height: '32px',
+                              minHeight: '32px'
+                            },
+                            '& .MuiInputBase-input': {
+                              padding: '6px 8px',
+                              height: '32px',
+                              boxSizing: 'border-box'
+                            }
+                          }}
+                        />
+                      </Box>
+                      
+                      {/* Ending Balance Section */}
+                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
                       {(() => {
                         // Check if endingBalance equals or differs from statementEndingBalance
                         const bothSet = endingBalance !== null && statementEndingBalance !== null
@@ -8953,7 +10081,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                       </Typography>
                       <TextField
                         size="small"
-                        type="number"
+                        type="text"
                         value={endingBalanceInput}
                         onChange={e => {
                           setEndingBalanceInput(e.target.value)
@@ -8965,7 +10093,9 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                             return
                           }
 
-                          const parsed = Number(endingBalanceInput.replace(',', '.'))
+                          // Remove spaces (thousands separators) and replace comma with dot for parsing
+                          const cleaned = endingBalanceInput.replace(/\s/g, '').replace(',', '.')
+                          const parsed = Number(cleaned)
 
                           if (Number.isNaN(parsed)) {
                             setEndingBalanceInputError(
@@ -8975,6 +10105,16 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                           }
 
                           setEndingBalance(parsed)
+                          
+                          // Format the input with spaces after parsing, and dot as decimal separator
+                          const formatted = parsed
+                            .toLocaleString('fr-FR', {
+                              minimumFractionDigits: 3,
+                              maximumFractionDigits: 3,
+                              useGrouping: true
+                            })
+                            .replace(',', '.')
+                          setEndingBalanceInput(formatted)
                         }}
                         placeholder="0.000"
                         error={!!endingBalanceInputError}
@@ -9001,6 +10141,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                           }
                         }}
                       />
+                      </Box>
                     </Box>
                   </Box>
                 </CardContent>
@@ -9811,7 +10952,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                           height: '32px',
                                           minHeight: '32px',
                                           maxHeight: '32px',
-                                          cursor: isLinked ? 'pointer' : 'default',
+                                          cursor: (isLinked || isNonOriginInGroup) ? 'pointer' : 'default',
                                           backgroundColor: isHighlighted ? '#e8f5e9' : '#ffffff',
                                           borderLeft: isLinked ? '3px solid #4caf50' : 'none',
                                           color: textColor,
@@ -9819,6 +10960,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                           boxShadow: isHighlightedFromCustomer ? '0 2px 8px rgba(76, 175, 80, 0.4)' : 'none',
                                           position: 'relative',
                                           animation: isHighlightedFromCustomer ? `${pulseBlueAnimation} 1.5s ease-in-out infinite` : 'none',
+                                          fontWeight: tx.type === 'origine' ? 600 : 'normal',
                                           '& .MuiTableCell-root': {
                                             padding: '4px 8px',
                                             fontSize: '0.75rem',
@@ -9831,8 +10973,10 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             height: '32px',
+                                            fontWeight: tx.type === 'origine' ? 600 : 'inherit',
                                             '& *': {
-                                              color: `${textColor} !important`
+                                              color: `${textColor} !important`,
+                                              fontWeight: tx.type === 'origine' ? 600 : 'inherit'
                                             }
                                           },
                                           '&:hover': {
@@ -10358,6 +11502,36 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       const isFirstInGroup = groupIndex === 0
                                       const isLastInGroup = groupIndex === groupedCustomers.length - 1
                                       
+                                      // Check if this customer transaction is origine
+                                      // Customer transactions might have type field or is_origine field, or be linked to an origine bank transaction
+                                      // Check both matched and unmatched bank transactions
+                                      // Also check if it's in unmatchedCustomerTransactions with origine status
+                                      const linkedBankTx = linkedBank ? (
+                                        filteredBankTransactions.find((btx: any) => btx.id === Number(linkedBank)) ||
+                                        unmatchedBankTransactions.find((btx: any) => btx.id === Number(linkedBank))
+                                      ) : null
+                                      // Check if this customer transaction is in unmatched list and is origine
+                                      const isUnmatchedOrigine = unmatchedCustomerTransactions.some((utx: any) => 
+                                        utx.id === tx.id && (
+                                          utx.type === 'origine' || 
+                                          utx.is_origine === true || 
+                                          utx.is_origine === 'true' || 
+                                          utx.is_origine === 1
+                                        )
+                                      )
+                                      
+                                      // Debug logging for customer transaction origine detection (Fullscreen View)
+                                      const hasTypeOrigine = tx.type === 'origine'
+                                      const hasIsOrigine = tx.is_origine === true || tx.is_origine === 'true' || tx.is_origine === 1
+                                      const linkedToOrigineBank = linkedBankTx && linkedBankTx.type === 'origine'
+                                      
+                                      const isCustomerOrigine = tx.type === 'origine' || 
+                                        tx.is_origine === true || 
+                                        tx.is_origine === 'true' || 
+                                        tx.is_origine === 1 ||
+                                        isUnmatchedOrigine ||
+                                        (linkedBankTx && linkedBankTx.type === 'origine')
+                                      
                                       // Get customer taxes from tax comparison results
                                       const allCustomerTaxes = taxComparisonResults.filter(tax => 
                                         tax.customer_transaction_id === tx.id
@@ -10385,28 +11559,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                         return !cachedTaxTypes.has(taxType)
                                       })
                                       
-                                      // Debug logging for customerTaxes array (Fullscreen) - show FULL structure
-                                      if (customerTaxes.length > 0) {
-                                        console.log('🔍 Customer Taxes Array Debug (Fullscreen):', {
-                                          transactionId: tx.id,
-                                          allCustomerTaxesCount: allCustomerTaxes.length,
-                                          cachedCustTaxesCount: cachedCustTaxes.length,
-                                          customerTaxesCount: customerTaxes.length,
-                                          firstTaxSample: customerTaxes[0],
-                                          firstTaxSampleKeys: Object.keys(customerTaxes[0] || {}),
-                                          allTaxSamples: customerTaxes.map(t => ({
-                                            tax_type: t.tax_type,
-                                            customer_tax: t.customer_tax,
-                                            customer_total_tax: t.customer_total_tax,
-                                            tax_amount: t.tax_amount,
-                                            value: t.value,
-                                            has_customer_tax: t.customer_tax !== null && t.customer_tax !== undefined && t.customer_tax !== '',
-                                            has_customer_total_tax: t.customer_total_tax !== null && t.customer_total_tax !== undefined && t.customer_total_tax !== '',
-                                            // Show ALL fields to identify correct structure
-                                            allFields: t
-                                          }))
-                                        })
-                                      }
+                                      // (removed verbose debug logging for customerTaxes array in fullscreen)
                                       
                                       // Determine circle emoji for customer transactions linked to bank non-origine transactions
                                       // The circle icon represents the bank non-origine transaction's respective customer tax status
@@ -10475,6 +11628,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                           boxShadow: isHighlightedFromBank ? '0 2px 8px rgba(76, 175, 80, 0.4)' : 'none',
                                           position: 'relative',
                                           animation: isHighlightedFromBank ? `${pulseGreenAnimation} 1.5s ease-in-out infinite` : 'none',
+                                          fontWeight: isCustomerOrigine ? 600 : 'normal',
                                           '& .MuiTableCell-root': {
                                             padding: '4px 8px',
                                             fontSize: '0.75rem',
@@ -10487,8 +11641,10 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             height: '32px',
+                                            fontWeight: isCustomerOrigine ? 600 : 'inherit',
                                             '& *': {
-                                              color: isLinked ? '#4caf50 !important' : 'inherit'
+                                              color: isLinked ? '#4caf50 !important' : 'inherit',
+                                              fontWeight: isCustomerOrigine ? 600 : 'inherit'
                                             }
                                           },
                                           '&:hover': {
@@ -10578,31 +11734,26 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                       {/* Customer Tax Rows - Fullscreen */}
                                       {customerTaxes.map((tax: any, taxIdx: number) => {
                                         const taxType = tax.tax_type || 'Tax'
-                                        // amount column uses customer_tax, total_amount column uses customer_total_tax
-                                        const customerTaxAmount = tax.customer_tax
-                                        const customerTotalTaxAmount = tax.customer_total_tax
+                                        // amount column uses customer_tax (individual amount), total_amount column uses customer_total_tax (total from API)
+                                        // IMPORTANT: Read values directly from tax object - ensure we get the correct API values
+                                        // Use bracket notation to avoid any getter/setter issues
+                                        const customerTaxAmount = tax['customer_tax'] || tax.customer_tax
+                                        const customerTotalTaxAmount = tax['customer_total_tax'] || tax.customer_total_tax
                                         
-                                        // Debug logging - show FULL raw tax object to see all available fields
-                                        console.log('🔍 Customer Tax Row Debug (Fullscreen):', {
-                                          taxType,
-                                          transactionId: tx.id,
-                                          taxIdx,
-                                          rawTax: tax,
-                                          allTaxKeys: Object.keys(tax),
-                                          customerTaxAmount,
-                                          customerTotalTaxAmount,
-                                          hasCustomerTax: customerTaxAmount !== null && customerTaxAmount !== undefined && customerTaxAmount !== '',
-                                          hasCustomerTotalTax: customerTotalTaxAmount !== null && customerTotalTaxAmount !== undefined && customerTotalTaxAmount !== '',
-                                          // Show all tax fields to identify the correct ones
-                                          taxFields: {
-                                            customer_tax: tax.customer_tax,
-                                            customer_total_tax: tax.customer_total_tax,
-                                            tax_amount: tax.tax_amount,
-                                            value: tax.value,
-                                            customerTax: tax.customerTax,
-                                            customerTotalTax: tax.customerTotalTax
-                                          }
-                                        })
+                                        // Verify we're reading the correct values
+                                        if (customerTotalTaxAmount === customerTaxAmount && tax.tax_type === 'AGIOS') {
+                                          console.warn('⚠️ WARNING: customer_total_tax equals customer_tax for AGIOS tax - this should not happen!', {
+                                            transactionId: tx.id,
+                                            taxType: tax.tax_type,
+                                            'tax.customer_tax': tax.customer_tax,
+                                            'tax.customer_total_tax': tax.customer_total_tax,
+                                            'tax["customer_tax"]': tax['customer_tax'],
+                                            'tax["customer_total_tax"]': tax['customer_total_tax'],
+                                            customerTaxAmount,
+                                            customerTotalTaxAmount,
+                                            rawTaxObject: tax
+                                          })
+                                        }
                                         
                                         // At least one value must exist (0 is a valid value, so check for null/undefined/empty string)
                                         if ((customerTaxAmount === null || customerTaxAmount === undefined || customerTaxAmount === '') &&
@@ -10615,31 +11766,21 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                         const formatNegativeValue = (value: any, fieldName: string): number | null => {
                                           // 0 is a valid value, so only check for null/undefined/empty string
                                           if (value === null || value === undefined || value === '') {
-                                            console.log(`  - ${fieldName}: null/undefined/empty, returning null`)
                                             return null
                                           }
                                           const num = typeof value === 'string' 
                                             ? parseFloat(value.replace(/\s/g, '').replace(',', '.')) 
                                             : Number(value)
                                           if (isNaN(num)) {
-                                            console.warn(`  - ${fieldName}: invalid number (${value}), returning null`)
                                             return null
                                           }
                                           const negativeValue = -Math.abs(num)
-                                          console.log(`  - ${fieldName}: ${value} -> ${negativeValue}`)
                                           return negativeValue
                                         }
                                         
                                         const amountValue = formatNegativeValue(customerTaxAmount, 'customer_tax (amount)')
                                         const totalAmountValue = formatNegativeValue(customerTotalTaxAmount, 'customer_total_tax (total_amount)')
                                         
-                                        console.log('✅ Final values (Fullscreen):', {
-                                          taxType,
-                                          amountValue,
-                                          totalAmountValue,
-                                          amountDisplay: amountValue !== null ? formatTaxValue(amountValue) : '-',
-                                          totalAmountDisplay: totalAmountValue !== null ? formatTaxValue(totalAmountValue) : '-'
-                                        })
                                         
                                         // Check if this tax has a matching bank tax
                                         const matchingTax = matchingBankTaxes.find((t: any) => 
@@ -10728,7 +11869,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                                       {taxCircleEmoji}
                                                     </span>
                                                   )}
-                                                  <span>💰 {taxType}</span>
+                                                  <span>{taxType}</span>
                                                 </Box>
                                               </TableCell>
                                             )}
@@ -10773,68 +11914,105 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                         </Box>
                       </Grid>
                     </Grid>
+                  </Box>
                     {/* Balance Sections */}
                     <Box display="flex" justifyContent="space-between" alignItems="center" gap={2} mt={3} mb={2} sx={{ width: '100%', flexShrink: 0 }}>
-                      {/* Solde Section - Display cumulative balance when transaction is clicked */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                        {renderIcon(selectedIcons.balance, 'warning')}
-                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                          {dictionary?.navigation?.balance || 'Solde'}:
-                        </Typography>
-                        {currentSolde !== null ? (
-                          <Typography
-                            variant="body1"
-                            color="warning.main"
-                            fontWeight={600}
-                            sx={{ mt: 0.25 }}
-                          >
-                            {currentSolde.toLocaleString('fr-FR', {
-                              minimumFractionDigits: 3,
-                              maximumFractionDigits: 3,
-                              useGrouping: true
-                            })}
+                      {/* Left group: Solde + Écart */}
+                      <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                        {/* Solde Section - Display cumulative balance when transaction is clicked */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          {renderIcon(selectedIcons.balance, 'warning')}
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.balance || 'Solde'}:
                           </Typography>
-                        ) : (
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ mt: 0.25, fontStyle: 'italic' }}
-                          >
-                            {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                          {currentSolde !== null ? (
+                            <Typography
+                              variant="body1"
+                              color="warning.main"
+                              fontWeight={600}
+                              sx={{ mt: 0.25 }}
+                            >
+                              {currentSolde.toLocaleString('fr-FR', {
+                                minimumFractionDigits: 3,
+                                maximumFractionDigits: 3,
+                                useGrouping: true
+                              })}
+                            </Typography>
+                          ) : (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ mt: 0.25, fontStyle: 'italic' }}
+                            >
+                              {dictionary?.navigation?.clickTransactionToSeeBalance || 'Cliquez sur une transaction pour voir le solde'}
+                            </Typography>
+                          )}
+                        </Box>
+                        
+                        {/* Écart Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          <Box sx={{ color: ecartColor }}>
+                            {renderIcon(selectedIcons.ecart, 'inherit')}
+                          </Box>
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.ecart || 'Écart'}:
                           </Typography>
-                        )}
+                          <TextField
+                            size="small"
+                            type="text"
+                            value={ecartInput}
+                            InputProps={{ readOnly: true }}
+                            placeholder="0.000"
+                            sx={{ 
+                              maxWidth: 180, 
+                              mt: 0.25,
+                              '& .MuiInputBase-root': {
+                                height: '32px',
+                                minHeight: '32px'
+                              },
+                              '& .MuiInputBase-input': {
+                                padding: '6px 8px',
+                                height: '32px',
+                                boxSizing: 'border-box',
+                                color: ecartColor
+                              }
+                            }}
+                          />
+                        </Box>
                       </Box>
                       
-                      {/* Total Difference Section */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
-                        {renderIcon(selectedIcons.totalDifference, 'error')}
-                        <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
-                          {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
-                        </Typography>
-                        <TextField
-                          size="small"
-                          type="text"
-                          value={totalDifferenceInput}
-                          InputProps={{ readOnly: true }}
-                          placeholder="0.000"
-                          sx={{ 
-                            maxWidth: 180, 
-                            mt: 0.25,
-                            '& .MuiInputBase-root': {
-                              height: '32px',
-                              minHeight: '32px'
-                            },
-                            '& .MuiInputBase-input': {
-                              padding: '6px 8px',
-                              height: '32px',
-                              boxSizing: 'border-box'
-                            }
-                          }}
-                        />
-                      </Box>
-                      
-                      {/* Ending Balance Section */}
-                      <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap" sx={{ marginLeft: 'auto' }}>
+                      {/* Right group: Total difference + Solde final */}
+                      <Box display="flex" alignItems="center" gap={3} flexWrap="wrap">
+                        {/* Total Difference Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+                          {renderIcon(selectedIcons.totalDifference, 'error')}
+                          <Typography variant="body2" fontWeight={500} color="text.primary" sx={{ fontSize: '0.857rem' }}>
+                            {dictionary?.navigation?.totalDifference || 'Total difference of ledger entry'}:
+                          </Typography>
+                          <TextField
+                            size="small"
+                            type="text"
+                            value={totalDifferenceInput}
+                            InputProps={{ readOnly: true }}
+                            placeholder="0.000"
+                            sx={{ 
+                              maxWidth: 180, 
+                              mt: 0.25,
+                              '& .MuiInputBase-root': {
+                                height: '32px',
+                                minHeight: '32px'
+                              },
+                              '& .MuiInputBase-input': {
+                                padding: '6px 8px',
+                                height: '32px',
+                                boxSizing: 'border-box'
+                              }
+                            }}
+                          />
+                        </Box>
+                        
+                        {/* Ending Balance Section */}
+                        <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
                         {(() => {
                           // Check if endingBalance equals or differs from statementEndingBalance
                           const bothSet = endingBalance !== null && statementEndingBalance !== null
@@ -10862,7 +12040,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                         </Typography>
                         <TextField
                           size="small"
-                          type="number"
+                          type="text"
                           value={endingBalanceInput}
                           onChange={e => {
                             setEndingBalanceInput(e.target.value)
@@ -10874,7 +12052,9 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                               return
                             }
 
-                            const parsed = Number(endingBalanceInput.replace(',', '.'))
+                            // Remove spaces (thousands separators) and replace comma with dot for parsing
+                            const cleaned = endingBalanceInput.replace(/\s/g, '').replace(',', '.')
+                            const parsed = Number(cleaned)
 
                             if (Number.isNaN(parsed)) {
                               setEndingBalanceInputError(
@@ -10884,6 +12064,16 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                             }
 
                             setEndingBalance(parsed)
+                            
+                            // Format the input with spaces after parsing, and dot as decimal separator
+                            const formatted = parsed
+                              .toLocaleString('fr-FR', {
+                                minimumFractionDigits: 3,
+                                maximumFractionDigits: 3,
+                                useGrouping: true
+                              })
+                              .replace(',', '.')
+                            setEndingBalanceInput(formatted)
                           }}
                           placeholder="0.000"
                           error={!!endingBalanceInputError}
@@ -11030,10 +12220,52 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Assign Internal Number Dialog (opened from shortcuts) */}
+      <Dialog
+        open={assignInternalNumberOpen}
+        onClose={handleCloseAssignInternalNumberDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          {dictionary?.navigation?.assignInternalNumber || 'Assign Internal Number'}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            {dictionary?.navigation?.assignInternalNumberDescription ||
+              'Enter the internal number to assign to all selected bank transactions in the reconciliation table.'}
+          </Typography>
+          <TextField
+            label={dictionary?.navigation?.internalNumber || 'Internal Number'}
+            fullWidth
+            value={assignInternalNumberValue}
+            onChange={e => {
+              setAssignInternalNumberValue(e.target.value)
+              setAssignInternalNumberError(null)
+            }}
+            disabled={assignInternalNumberLoading}
+            error={!!assignInternalNumberError}
+            helperText={assignInternalNumberError || ' '}
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseAssignInternalNumberDialog} disabled={assignInternalNumberLoading}>
+            {dictionary?.navigation?.cancel || 'Cancel'}
+          </Button>
+          <Button
+            onClick={handleConfirmAssignInternalNumber}
+            variant="contained"
+            disabled={assignInternalNumberLoading}
+          >
+            {assignInternalNumberLoading
+              ? (dictionary?.navigation?.assigning || 'Assigning...')
+              : (dictionary?.navigation?.assign || 'Assign')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
     </Box>
   )
 }
-
-export default ReconciliationPage
-
-
