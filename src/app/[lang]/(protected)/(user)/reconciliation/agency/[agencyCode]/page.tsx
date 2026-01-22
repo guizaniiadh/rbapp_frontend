@@ -9713,7 +9713,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                         )}
                                         <Tooltip 
                                           title={tx.description || ''} 
-                                          placement="top" 
+                                          placement="bottom" 
                                           arrow
                                           componentsProps={{
                                             tooltip: {
@@ -11702,7 +11702,7 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                               )}
                                               <Tooltip 
                                                 title={tx.description || ''} 
-                                                placement="top" 
+                                                placement="bottom" 
                                                 arrow
                                                 componentsProps={{
                                                   tooltip: {

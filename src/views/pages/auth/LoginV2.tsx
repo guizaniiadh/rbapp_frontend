@@ -49,6 +49,10 @@ import { getDictionaryClient } from '@/utils/getDictionaryClient'
 
 // Backend URL from environment variable
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+
+// Debug: Log BASE_URL to see what value is being used
+console.log('BASE_URL from env:', BASE_URL)
+console.log('NEXT_PUBLIC_BACKEND_URL env var:', process.env.NEXT_PUBLIC_BACKEND_URL)
   
 // Styled Custom Components
 const LoginIllustration = styled('img')(({ theme }) => ({
@@ -153,7 +157,9 @@ const LoginV2 = ({ mode }: { mode: SystemMode }) => {
 
     try {
       // Step 1: Get JWT tokens from Django REST Framework
-      const tokenResponse = await fetch(`${BASE_URL}/api/token/`, {
+      const tokenUrl = `${BASE_URL}/api/token/`
+      console.log('Login - Calling token URL:', tokenUrl)
+      const tokenResponse = await fetch(tokenUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

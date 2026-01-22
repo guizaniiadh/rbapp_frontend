@@ -13,6 +13,7 @@ const tooltip: Theme['components'] = {
         paddingBlock: 5
       }),
       popper: {
+        zIndex: 10000, // Higher than ShortcutsDropdown z-[9999] to appear above it
         '&[data-popper-placement*="bottom"] .MuiTooltip-tooltip': {
           marginTop: '6px !important'
         },

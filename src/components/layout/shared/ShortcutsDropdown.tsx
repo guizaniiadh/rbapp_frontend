@@ -1,7 +1,7 @@
 'use client'
 
 // React Imports
-import { useCallback, useRef, useState, useEffect } from 'react'
+import React, { useCallback, useRef, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
 
 // Next Imports
@@ -59,6 +59,45 @@ const ScrollWrapper = ({ children, hidden }: { children: ReactNode; hidden: bool
       </div>
     )
   }
+}
+
+// Component to show tooltip only when text is truncated
+const TruncatedTooltip = ({ title, children, tooltipProps }: { title: string; children: ReactNode; tooltipProps?: any }) => {
+  const textRef = useRef<HTMLElement>(null)
+  const [isTruncated, setIsTruncated] = useState(false)
+
+  useEffect(() => {
+    const checkTruncation = () => {
+      if (textRef.current) {
+        const element = textRef.current
+        setIsTruncated(element.scrollWidth > element.clientWidth)
+      }
+    }
+
+    // Use setTimeout to ensure DOM is rendered
+    const timeoutId = setTimeout(checkTruncation, 0)
+    // Recheck on window resize
+    window.addEventListener('resize', checkTruncation)
+    return () => {
+      clearTimeout(timeoutId)
+      window.removeEventListener('resize', checkTruncation)
+    }
+  }, [title])
+
+  // Clone children and add ref - MUI Typography supports ref forwarding
+  const childrenWithRef = React.isValidElement(children)
+    ? React.cloneElement(children as React.ReactElement, { ref: textRef })
+    : <span ref={textRef}>{children}</span>
+
+  if (!isTruncated) {
+    return <>{childrenWithRef}</>
+  }
+
+  return (
+    <Tooltip title={title} {...tooltipProps}>
+      {childrenWithRef}
+    </Tooltip>
+  )
 }
 
 const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: ShortcutsType[]; size?: 'normal' | 'small' | 'medium' }) => {
@@ -239,42 +278,19 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                               <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
                             <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
-                              <Tooltip 
-                                title={shortcut.title} 
-                                placement="top" 
-                                arrow
-                                componentsProps={{
-                                  tooltip: {
-                                    sx: {
-                                      fontSize: '0.75rem',
-                                      padding: '4px 8px',
-                                      maxWidth: '200px',
-                                      zIndex: 10000
-                                    }
-                                  },
-                                  arrow: {
-                                    sx: {
-                                      fontSize: '0.75rem'
-                                    }
-                                  }
-                                }}
-                              >
-                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
-                                  {shortcut.title}
-                                </Typography>
-                              </Tooltip>
-                              {shortcut.subtitle && (
-                                <Tooltip 
-                                  title={shortcut.subtitle} 
-                                  placement="top" 
-                                  arrow
-                                  componentsProps={{
+                              <TruncatedTooltip 
+                                title={shortcut.title}
+                                tooltipProps={{
+                                  placement: "bottom",
+                                  arrow: true,
+                                  componentsProps: {
                                     tooltip: {
                                       sx: {
                                         fontSize: '0.75rem',
                                         padding: '4px 8px',
                                         maxWidth: '200px',
-                                        zIndex: 10000
+                                        zIndex: 10000,
+                                        marginTop: '8px !important'
                                       }
                                     },
                                     arrow: {
@@ -282,10 +298,39 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                                         fontSize: '0.75rem'
                                       }
                                     }
+                                  }
+                                }}
+                              >
+                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
+                                  {shortcut.title}
+                                </Typography>
+                              </TruncatedTooltip>
+                              {shortcut.subtitle && (
+                                <TruncatedTooltip 
+                                  title={shortcut.subtitle}
+                                  tooltipProps={{
+                                    placement: "bottom",
+                                    arrow: true,
+                                    componentsProps: {
+                                      tooltip: {
+                                        sx: {
+                                          fontSize: '0.75rem',
+                                          padding: '4px 8px',
+                                          maxWidth: '200px',
+                                          zIndex: 10000,
+                                          marginTop: '8px !important'
+                                        }
+                                      },
+                                      arrow: {
+                                        sx: {
+                                          fontSize: '0.75rem'
+                                        }
+                                      }
+                                    }
                                   }}
                                 >
                                   <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>{shortcut.subtitle}</Typography>
-                                </Tooltip>
+                                </TruncatedTooltip>
                               )}
                             </div>
                           </div>
@@ -316,42 +361,19 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                               <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
                             <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
-                              <Tooltip 
-                                title={shortcut.title} 
-                                placement="top" 
-                                arrow
-                                componentsProps={{
-                                  tooltip: {
-                                    sx: {
-                                      fontSize: '0.75rem',
-                                      padding: '4px 8px',
-                                      maxWidth: '200px',
-                                      zIndex: 10000
-                                    }
-                                  },
-                                  arrow: {
-                                    sx: {
-                                      fontSize: '0.75rem'
-                                    }
-                                  }
-                                }}
-                              >
-                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
-                                  {shortcut.title}
-                                </Typography>
-                              </Tooltip>
-                              {shortcut.subtitle && (
-                                <Tooltip 
-                                  title={shortcut.subtitle} 
-                                  placement="top" 
-                                  arrow
-                                  componentsProps={{
+                              <TruncatedTooltip 
+                                title={shortcut.title}
+                                tooltipProps={{
+                                  placement: "bottom",
+                                  arrow: true,
+                                  componentsProps: {
                                     tooltip: {
                                       sx: {
                                         fontSize: '0.75rem',
                                         padding: '4px 8px',
                                         maxWidth: '200px',
-                                        zIndex: 10000
+                                        zIndex: 10000,
+                                        marginTop: '8px !important'
                                       }
                                     },
                                     arrow: {
@@ -359,10 +381,39 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                                         fontSize: '0.75rem'
                                       }
                                     }
+                                  }
+                                }}
+                              >
+                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
+                                  {shortcut.title}
+                                </Typography>
+                              </TruncatedTooltip>
+                              {shortcut.subtitle && (
+                                <TruncatedTooltip 
+                                  title={shortcut.subtitle}
+                                  tooltipProps={{
+                                    placement: "bottom",
+                                    arrow: true,
+                                    componentsProps: {
+                                      tooltip: {
+                                        sx: {
+                                          fontSize: '0.75rem',
+                                          padding: '4px 8px',
+                                          maxWidth: '200px',
+                                          zIndex: 10000,
+                                          marginTop: '8px !important'
+                                        }
+                                      },
+                                      arrow: {
+                                        sx: {
+                                          fontSize: '0.75rem'
+                                        }
+                                      }
+                                    }
                                   }}
                                 >
                                   <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>{shortcut.subtitle}</Typography>
-                                </Tooltip>
+                                </TruncatedTooltip>
                               )}
                             </div>
                           </Link>
