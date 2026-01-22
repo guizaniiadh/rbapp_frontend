@@ -1,7 +1,10 @@
 import axios from 'axios'
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+const API_BASE_URL = `${BACKEND_URL}/api`
+
 const apiClient = axios.create({
-  baseURL: 'http://127.0.0.1:8000/api',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json'
@@ -11,7 +14,7 @@ const apiClient = axios.create({
 // Token refresh function
 const refreshAccessToken = async (refreshToken: string) => {
   try {
-    const response = await axios.post('http://127.0.0.1:8000/api/token/refresh/', {
+    const response = await axios.post(`${API_BASE_URL}/token/refresh/`, {
       refresh: refreshToken
     })
     return response.data.access

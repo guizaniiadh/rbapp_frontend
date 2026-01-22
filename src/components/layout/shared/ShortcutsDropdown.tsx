@@ -239,11 +239,53 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                               <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
                             <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
-                              <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-                                {shortcut.title}
-                              </Typography>
+                              <Tooltip 
+                                title={shortcut.title} 
+                                placement="top" 
+                                arrow
+                                componentsProps={{
+                                  tooltip: {
+                                    sx: {
+                                      fontSize: '0.75rem',
+                                      padding: '4px 8px',
+                                      maxWidth: '200px',
+                                      zIndex: 10000
+                                    }
+                                  },
+                                  arrow: {
+                                    sx: {
+                                      fontSize: '0.75rem'
+                                    }
+                                  }
+                                }}
+                              >
+                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
+                                  {shortcut.title}
+                                </Typography>
+                              </Tooltip>
                               {shortcut.subtitle && (
-                                <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{shortcut.subtitle}</Typography>
+                                <Tooltip 
+                                  title={shortcut.subtitle} 
+                                  placement="top" 
+                                  arrow
+                                  componentsProps={{
+                                    tooltip: {
+                                      sx: {
+                                        fontSize: '0.75rem',
+                                        padding: '4px 8px',
+                                        maxWidth: '200px',
+                                        zIndex: 10000
+                                      }
+                                    },
+                                    arrow: {
+                                      sx: {
+                                        fontSize: '0.75rem'
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>{shortcut.subtitle}</Typography>
+                                </Tooltip>
                               )}
                             </div>
                           </div>
@@ -274,11 +316,53 @@ const ShortcutsDropdown = ({ shortcuts, size = 'normal' }: { shortcuts: Shortcut
                               <i className={classnames('text-[1.25rem]', shortcut.icon)} />
                             </CustomAvatar>
                             <div className='flex flex-col items-center text-center min-w-0 w-full' style={{ overflow: 'hidden' }}>
-                              <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-                                {shortcut.title}
-                              </Typography>
+                              <Tooltip 
+                                title={shortcut.title} 
+                                placement="top" 
+                                arrow
+                                componentsProps={{
+                                  tooltip: {
+                                    sx: {
+                                      fontSize: '0.75rem',
+                                      padding: '4px 8px',
+                                      maxWidth: '200px',
+                                      zIndex: 10000
+                                    }
+                                  },
+                                  arrow: {
+                                    sx: {
+                                      fontSize: '0.75rem'
+                                    }
+                                  }
+                                }}
+                              >
+                                <Typography className='font-medium' color='text.primary' sx={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>
+                                  {shortcut.title}
+                                </Typography>
+                              </Tooltip>
                               {shortcut.subtitle && (
-                                <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{shortcut.subtitle}</Typography>
+                                <Tooltip 
+                                  title={shortcut.subtitle} 
+                                  placement="top" 
+                                  arrow
+                                  componentsProps={{
+                                    tooltip: {
+                                      sx: {
+                                        fontSize: '0.75rem',
+                                        padding: '4px 8px',
+                                        maxWidth: '200px',
+                                        zIndex: 10000
+                                      }
+                                    },
+                                    arrow: {
+                                      sx: {
+                                        fontSize: '0.75rem'
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Typography variant='body2' sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', cursor: 'default' }}>{shortcut.subtitle}</Typography>
+                                </Tooltip>
                               )}
                             </div>
                           </Link>

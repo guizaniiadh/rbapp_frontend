@@ -42,7 +42,8 @@ import {
   Popper,
   ClickAwayListener,
   Fade,
-  MenuList
+  MenuList,
+  Tooltip
 } from '@mui/material'
 import { Checkbox } from '@mui/material'
 import { 
@@ -3391,80 +3392,82 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
     }
   }, [bankCode, selectedBankTransactions, selectedCustomerTransactions])
 
-  // Shortcuts for the shortcuts dropdown
+  // Shortcuts for the shortcuts dropdown (EN/FR fallbacks when dictionary not yet loaded)
   const shortcuts: ShortcutsType[] = useMemo(() => {
     const safeDict = dictionary?.navigation || {}
+    const isFr = lang === 'fr'
+    const t = (key: string, en: string, fr: string) => (safeDict as any)[key] ?? (isFr ? fr : en)
     return [
       {
         icon: 'tabler-file-download',
-        title: safeDict.exportXL || 'Export XL',
+        title: t('exportXL', 'Export XL', 'Exporter XL'),
         subtitle: '',
         onClick: handleExportToExcel
       },
       {
         icon: hideMissingTaxes ? 'tabler-eye' : 'tabler-eye-off',
         title: hideMissingTaxes 
-          ? (safeDict.showMissingTaxes || 'Show Missing Taxes')
-          : (safeDict.hideMissingTaxes || 'Hide Missing Taxes'),
+          ? t('showMissingTaxes', 'Show Missing Taxes', 'Afficher les taxes manquantes')
+          : t('hideMissingTaxes', 'Hide Missing Taxes', 'Masquer les taxes manquantes'),
         subtitle: '',
         onClick: handleToggleHideMissingTaxes
       },
       {
         icon: 'tabler-hash',
-        title: safeDict.assignInternalNumber || 'Assign Internal Number',
+        title: t('assignInternalNumber', 'Assign Internal Number', 'Assigner un numéro interne'),
         subtitle: '',
         onClick: handleOpenAssignInternalNumberDialog
       },
       {
         icon: 'tabler-link',
-        title: safeDict.manualMatch || 'Manual Match',
+        title: t('manualMatch', 'Manual Match', 'Rapprochement manuel'),
         subtitle: '',
         onClick: handleManualMatch
       },
       {
         icon: 'tabler-calculator',
-        title: safeDict.calculator || 'Calculator',
+        title: t('calculator', 'Calculator', 'Calculatrice'),
         subtitle: '',
         onClick: () => setCalculatorOpen(true)
       },
       {
         icon: 'tabler-printer',
-        title: safeDict.printReport || 'Print Report',
+        title: t('printReport', 'Print Report', 'Imprimer le rapport'),
         subtitle: '',
         onClick: handlePrintReport
       },
       {
         url: '/apps/invoice/list',
         icon: 'tabler-file-dollar',
-        title: safeDict.invoiceApp || 'Invoice App',
+        title: t('invoiceApp', 'Invoice App', 'Application de facturation'),
         subtitle: ''
       },
       {
         url: '/apps/user/list',
         icon: 'tabler-user',
-        title: safeDict.users || 'Users',
+        title: t('users', 'Users', 'Utilisateurs'),
         subtitle: ''
       },
       {
         url: '/apps/roles',
         icon: 'tabler-users-group',
-        title: safeDict.roleManagement || 'Role Management',
+        title: t('roleManagement', 'Role Management', 'Gestion des rôles'),
         subtitle: ''
       },
       {
         url: '/',
         icon: 'tabler-device-desktop-analytics',
-        title: safeDict.dashboard || 'Dashboard',
+        title: t('dashboard', 'Dashboard', 'Tableau de bord'),
         subtitle: ''
       },
       {
         url: '/shared/pages/account-settings',
         icon: 'tabler-settings',
-        title: safeDict.settings || 'Settings',
+        title: t('settings', 'Settings', 'Paramètres'),
         subtitle: ''
       }
     ]
-  }, [handleExportToExcel, dictionary, hideMissingTaxes, handleToggleHideMissingTaxes, handleOpenAssignInternalNumberDialog, handlePrintReport, handleManualMatch])
+  }, [lang, dictionary, hideMissingTaxes, handleExportToExcel, handleToggleHideMissingTaxes, handleOpenAssignInternalNumberDialog, handlePrintReport, handleManualMatch])
 
   // Play notification sound
   const playNotificationSound = useCallback(() => {
@@ -9708,7 +9711,28 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                             {circleEmoji}
                                           </span>
                                         )}
-                                        <span>{tx.description}</span>
+                                        <Tooltip 
+                                          title={tx.description || ''} 
+                                          placement="top" 
+                                          arrow
+                                          componentsProps={{
+                                            tooltip: {
+                                              sx: {
+                                                fontSize: '0.75rem',
+                                                padding: '4px 8px',
+                                                maxWidth: '200px',
+                                                zIndex: 10000
+                                              }
+                                            },
+                                            arrow: {
+                                              sx: {
+                                                fontSize: '0.75rem'
+                                              }
+                                            }
+                                          }}
+                                        >
+                                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{tx.description}</span>
+                                        </Tooltip>
                                       </Box>
                                     </TableCell>
                                   )}
@@ -11676,7 +11700,28 @@ const sortTransactionsByDbOrder = useCallback((items: any[]) => {
                                                   {circleEmoji}
                                                 </span>
                                               )}
-                                              <span>{tx.description}</span>
+                                              <Tooltip 
+                                                title={tx.description || ''} 
+                                                placement="top" 
+                                                arrow
+                                                componentsProps={{
+                                                  tooltip: {
+                                                    sx: {
+                                                      fontSize: '0.75rem',
+                                                      padding: '4px 8px',
+                                                      maxWidth: '200px',
+                                                      zIndex: 10000
+                                                    }
+                                                  },
+                                                  arrow: {
+                                                    sx: {
+                                                      fontSize: '0.75rem'
+                                                    }
+                                                  }
+                                                }}
+                                              >
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{tx.description}</span>
+                                              </Tooltip>
                                             </Box>
                                           </TableCell>
                                         )}
